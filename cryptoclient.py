@@ -2,8 +2,6 @@
 import socket, ssl, os, hashlib, struct
 from aespython import key_expander, aes_cipher, cbc_mode
 
-def bytetostr(b):
-    return "".join([chr(i) for i in b])
 
 def encrypt(plaintext):
     #takes a file plaintext

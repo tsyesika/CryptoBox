@@ -24,7 +24,6 @@ class CipherMode:
     def set_iv(self, iv):
         if len(iv) == self._block_size:
             self._iv = iv
-            print "iv set"
 
     def encrypt_block(self, plaintext):
         raise(NotImplementedError, "Abstract function")

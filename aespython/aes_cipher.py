@@ -89,13 +89,6 @@ class AESCipher:
     def cipher_block (self, state):
         """Perform AES block cipher on input"""
         #PKCS7 Padding
-        if 16-len(state):
-            fout = open(r"C:\Users\Philip\python\cryptobox\padding.txt","w")
-            print 16-len(state)
-            padding = [chr(i) for i in [16-len(state)]*(16-len(state))]
-            print padding
-            for char in padding:
-                fout.write(char)
         state=state+[16-len(state)]*(16-len(state))#Fails test if it changes the input with +=
         
         self._add_round_key(state, 0)
