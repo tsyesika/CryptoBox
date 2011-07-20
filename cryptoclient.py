@@ -2,8 +2,21 @@
 import socket, ssl, os, hashlib, struct
 from aespython import key_expander, aes_cipher, cbc_mode
 
+def getfileobject(path,writemode):
+    if type(path) == file:
+        return path
+    pathsplit = os.path.split(path)
+    if not os.path.exists(pathsplit[0]) or not (os.path.exists(pathsplit[1]) or writemode):
+        raise Exception("Invalid path %s" % path)
+    if not os.path.exists(pathsplit[1]): #invalid path tail
+        print "Creating new file for writing called", path
+        return open(path,"wb")
+    if writemode:
+        return open(path,"wb")
+    else:
+        return open(path,"rb")
 
-def encrypt(plaintext,out):
+def encrypt(plaintext,out,iv):
     #takes a file plaintext
     #outputs ciphertext to either a file or a list
     plaintext.seek(0,os.SEEK_END)
@@ -14,20 +27,14 @@ def encrypt(plaintext,out):
     if isinstance(out,list):
         out.append(struct.pack("L",length))
         outtolist = True
-    elif isinstance(out,str):
-        pathsplit = os.path.split(out)
-        if not os.path.exists(pathsplit[0]):
-            raise Exception("Invalid path %s" % out)
-        if not os.path.exists(pathsplit[1]):
-            print "Creating new cipher file", out
-        out = open(out,"wb")
-        out.write(struct.pack("L",length))
-    elif isinstance(out,file):
+    elif isinstance(out,str) or isinstance(out,file):
+        out = getfileobject(out,True)
         out.write(struct.pack("L",length))
     else:
         #out is not a list, file or path
         raise TypeError("out must be a list, file or path string")    
-    
+
+    aes_cbc_256.set_iv(iv)
     while True:
         plainblock = bytearray(plaintext.read(16)) #16-byte blocks
         if len(plainblock) == 0:
@@ -42,31 +49,48 @@ def encrypt(plaintext,out):
     if not outtolist:
         out.close()
 
-def decrypt(ciphertext):
-    #takes a file ciphertext
-    #creates a plaintext file, currently called decrypted.txt
-    fout = open("decrypted.txt","wb")
-    aes_cbc_256.set_iv(iv) #reset the iv to prevent the first block being b0rk'd
-    length = ciphertext.read(struct.calcsize("L"))
-    length = struct.unpack("L",length)[0]
+def decrypt(ciphertext,out,iv):
+    #takes a file, path string or list ciphertext
+    #creates a plaintext file out, which must be a file object or path string
+    readfromfile = False
+    if type(ciphertext) in (file,str):
+        readfromfile = True
+        ciphertext = getfileobject(ciphertext,False)
+        length = ciphertext.read(struct.calcsize("L"))
+        length = struct.unpack("L",length)[0]
+    elif type(ciphertext) == list:
+        length = struct.unpack("L",ciphertext[0])[0]
+        del ciphertext[0]
+    else:
+        #ciphertext is not a list, file or path
+        raise TypeError("ciphertext must be a list, file or path string")
+    out = getfileobject(out,True)
+    
     blocks = 0
-    out = ""
     plainblock = ""
+    aes_cbc_256.set_iv(iv)
     while True:
-        cipherblock = list(bytearray(ciphertext.read(16))) #16-byte (128 bit) blocks
+        if readfromfile:
+            cipherblock = list(bytearray(ciphertext.read(16))) #16-byte (128 bit) blocks
+        else:
+            if ciphertext:
+                cipherblock = [ord(char) for char in ciphertext.pop(0)]
+            else:
+                cipherblock = []
         if len(cipherblock) == 0:
             #EOF
             padding = blocks*16 - length
-            fout.write(plainblock[:16-padding])
+            out.write(plainblock[:16-padding])
             break
         else:
-            fout.write(plainblock)
+            out.write(plainblock)
         blocks += 1
         plainblock = aes_cbc_256.decrypt_block(cipherblock)
         plainblock = "".join([chr(i) for i in plainblock])
         
-    fout.close()
-    ciphertext.close()
+    out.close()
+    if readfromfile:
+        ciphertext.close()
 
 plaintext = open(r"C:\Users\Philip\python\cryptobox\testfile.txt","rb")
 salt = '\xe1(\xfe\xfb\xba\xad\xd4\x8c\xb8ZZ\x86\x08\xc9\x1c\x95>\xa3\xb3\xc0pr\r\xc2\x9c[\xa7>\xfa\x0c\xc8\xc6'
@@ -78,12 +102,11 @@ key_expander_256 = key_expander.KeyExpander(256) #(256 bit key)
 expanded_key = key_expander_256.expand(key) #produces a longer, usable key
 aes_cipher_256 = aes_cipher.AESCipher(expanded_key)
 aes_cbc_256 = cbc_mode.CBCMode(aes_cipher_256, 16) #16 bits = block size
-aes_cbc_256.set_iv(iv)
 
-#outfile = open(r"C:\Users\Philip\python\cryptobox\cipher.txt","wb")
+outfile = open(r"C:\Users\Philip\python\cryptobox\cipher.txt","wb")
 outpath = r"C:\Users\Philip\python\cryptobox\cipher.txt"
 #outlist = []
-encrypt(plaintext,outlist)
+encrypt(plaintext,outfile,iv)
 ciphertext = open(r"C:\Users\Philip\python\cryptobox\cipher.txt","rb")
-decrypt(ciphertext)
+decrypt(ciphertext,r"C:\Users\Philip\python\cryptobox\decrypted.txt",iv)
 ciphertext.close()
