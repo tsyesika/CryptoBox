@@ -3,23 +3,44 @@ import socket, ssl, os, hashlib, struct
 from aespython import key_expander, aes_cipher, cbc_mode
 
 
-def encrypt(plaintext):
+def encrypt(plaintext,out):
     #takes a file plaintext
-    #creates a ciphertext file, currently called cipher.txt
-    fout = open("cipher.txt","wb")
-    length = os.stat(r"C:\Users\Philip\python\cryptobox\testfile.txt").st_size
-    #write the length of the unpadded plaintext file to the start of the
-    #ciphertext, so the decrypter knows how many bytes padding to ignore
-    fout.write(struct.pack("L",length))
+    #outputs ciphertext to either a file or a list
+    plaintext.seek(0,os.SEEK_END)
+    length = plaintext.tell() #get file length, so the decrypter knows how many bytes padding to ignore
+    plaintext.seek(0) #put the cursor back to the start of the file
+
+    outtolist = False
+    if isinstance(out,list):
+        out.append(struct.pack("L",length))
+        outtolist = True
+    elif isinstance(out,str):
+        pathsplit = os.path.split(out)
+        if not os.path.exists(pathsplit[0]):
+            raise Exception("Invalid path %s" % out)
+        if not os.path.exists(pathsplit[1]):
+            print "Creating new cipher file", out
+        out = open(out,"wb")
+        out.write(struct.pack("L",length))
+    elif isinstance(out,file):
+        out.write(struct.pack("L",length))
+    else:
+        #out is not a list, file or path
+        raise TypeError("out must be a list, file or path string")    
+    
     while True:
-        plainblock = bytearray(plaintext.read(16)) #16-byte (128 bit) blocks
+        plainblock = bytearray(plaintext.read(16)) #16-byte blocks
         if len(plainblock) == 0:
-            #padding seems to be done automatically
+            #PKCS7 padding was applied automatically to the previous block
             break
         cipherblock = aes_cbc_256.encrypt_block(plainblock)
         cipherblock = "".join([chr(i) for i in cipherblock])
-        fout.write(cipherblock)
-    fout.close()
+        if outtolist:
+            out.append(cipherblock)
+        else:
+            out.write(cipherblock)
+    if not outtolist:
+        out.close()
 
 def decrypt(ciphertext):
     #takes a file ciphertext
@@ -59,7 +80,10 @@ aes_cipher_256 = aes_cipher.AESCipher(expanded_key)
 aes_cbc_256 = cbc_mode.CBCMode(aes_cipher_256, 16) #16 bits = block size
 aes_cbc_256.set_iv(iv)
 
-encrypt(plaintext)
+#outfile = open(r"C:\Users\Philip\python\cryptobox\cipher.txt","wb")
+outpath = r"C:\Users\Philip\python\cryptobox\cipher.txt"
+#outlist = []
+encrypt(plaintext,outlist)
 ciphertext = open(r"C:\Users\Philip\python\cryptobox\cipher.txt","rb")
 decrypt(ciphertext)
 ciphertext.close()
