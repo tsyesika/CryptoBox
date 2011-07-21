@@ -18,6 +18,7 @@ def getfileobject(path,writemode):
 def encrypt(plaintext,out,iv):
     #takes a file plaintext
     #outputs ciphertext to either a file or a list
+    plaintext = getfileobject(plaintext,False)
     plaintext.seek(0,os.SEEK_END)
     length = plaintext.tell() #get file length, so the decrypter knows how many bytes padding to ignore
     plaintext.seek(0) #put the cursor back to the start of the file
