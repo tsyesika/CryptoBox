@@ -6,13 +6,23 @@
 
 import socket, hashlib, thread, server_config, ssl
 
+def authenticate(sock):
+        ID = sock.recv(128) #receive email and password hash from client
+        email = ID[:64]
+        email = email[email.index(chr(0))] #shave off the padding
+        passhash = ID[:64]
+
 def Connection_Handler(sock):
 	""" Handles new connections to server """
-	ID = sock.recv(128) #receive email and password hash from client
-	email = ID[:64]
-	email = email[email.index(chr(0))] #shave off the padding
-	passhash = ID[:64]
+	while True:
+                header = sock.recv(4)
+                handler = ord(header[0])
+                handlers[handler](sock)
+                
 	
+handlers = {
+        1:authenticate
+        }
 
 if __name__ == "__main__":
 	# Setup port
@@ -21,6 +31,7 @@ if __name__ == "__main__":
 	else:
 		sock = socket.socket()
 		sock.bind(config.bind_ip,config.bind_port)
+		sock.listen(5)
 	while True:
 		sock, addr = sock.accept()
 		if server_config.sslwrap:
