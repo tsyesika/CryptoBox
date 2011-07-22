@@ -1,10 +1,17 @@
 #CryptoBox client
 import socket, ssl, os, hashlib, struct
 import easyaes
-from math import ceil
+from math import ceil as __ceil__
 
 class _globals():
     pass
+
+def sha(x):
+    return hashlib.sha512(x).digest()
+
+def ceil(x,y):
+    """ Returns x/y rounded up to the nearest integer """
+    return int(__ceil__(float(x)/y))
 
 def makeheader(first,*args):
     """
@@ -23,9 +30,6 @@ def makeheader(first,*args):
             raise Exception("Unsupported type (can only pack strings, ints and floats")
     header += "|"
     return header
-
-def sha(x):
-    return hashlib.sha512(x).digest()
 
 def getemailandpasshash():
     email = raw_input("Enter email: ")
@@ -60,58 +64,48 @@ def new_account():
     else:
         print "Fail"
     
-def upload():
-    path = raw_input("Enter path to file:\n")
-    length = int(ceil(os.stat(path).st_size/16.0)) #now length is number of blocks
-    message = makeheader(3,struct.pack("i",length)) #add a block to length, just to be safe
-    socket.send(message) #send request has no body
-    reply = socket.recv(1)
-    if ord(reply) != 1:
-        print "Upload request denied. Sorry."
-        return
-    
-    ciphertext = []
-    ivkey = os.urandom(16)
-    iv = sha(ivkey+g.password)
-    fin = open(path,"rb")
-    h = sha(fin.read())
-    fin.close()
-    fout = open("iv_table.txt","a")
-    fout.write(h+":"+ivkey+"\n") #store the ivkey for decrypting the file later
-    fout.close()
-
-    easyaes.encrypt(path,ciphertext,iv)
+def upload(data):
+    """ Sends a large string data to the server, using sha to ensure integrity """
     # SEND HEAD
-    exactlength = struct.calcsize("L")+64+(len(ciphertext)-1)*16 + int(ceil(len(ciphertext)/16.0))*64
-    #            lengthmarker +lengthmarkerhash + ciphertext + ciphertexthashes
-    message = makeheader(4,struct.pack("i",exactlength))
+    exactlength = len(data)+ceil(len(data),256)*64
+    #           length of file   + number of hashes   *  64 bytes per hash
+    message = makeheader(4,struct.pack("i",data))
     socket.send(message)
     # SEND BODY
-    socket.send(ciphertext[0]) #plaintext length marker
-    socket.send(sha(ciphertext[0])) #hash of marker
-    cursor = 1
-    while cursor < len(ciphertext):
-        if len(ciphertext[cursor:]) >= 16:
-            block = "".join(ciphertext[cursor:cursor+16])
+    cursor = 0
+    while cursor < len(data):
+        if len(data) - cursor >= 256:
+            block = data[cursor:cursor+256]
         else:
-            block = "".join(ciphertext[cursor:])
+            block = data[cursor:]
         socket.send(block)
         socket.send(sha(block))
-        cursor += 16
-    
+        cursor += 256
+
+    #wait for acknowledgement from server
+    while True:
+        resend = ""
+        resend += socket.recv(1)
+        if resend[-1] == "|":
+            resend = [struct.unpack("i",i) for i in resend.split(":")[:-1]]
+            break
+        
+    for i in resend:
+        #resend corrupted blocks
+        upload(data[ i : min(i+256,len(data)) ])
+    return len(resend)
 
 #message header 1st bytes:
 #1 - authentication request
 #2 - new account request
-#3 - send request
-#4 - incoming file (next four bytes store number of 16-byte blocks in file as an unsigned short
-
+#3 - send request (followed by approximate file size)
+#4 - incoming file (next four bytes store number of 16-byte blocks in file as an integer)
 g = _globals()
 g.loggedin = False
 
 socket = socket.socket()
 print "Connecting..."
-socket.connect(("85.211.57.20",7272))
+socket.connect(("localhost",7272))
 print "Connected"
 
 while True:
@@ -124,4 +118,27 @@ while True:
     elif inp == 2:
         new_account()
     elif inp == 3:
-        upload()
+        path = raw_input("Enter path to file:\n")
+        length = int(ceil(os.stat(path).st_size/16.0)) #now length is number of blocks
+        message = makeheader(3,struct.pack("i",length)) #add a block to length, just to be safe
+        socket.send(message) #send request has no body
+        reply = socket.recv(1)
+        if ord(reply) != 1:
+            print "Upload request denied. Sorry."
+            return
+
+        #ENCRYT FILE, STORE IV KEY
+        ivkey = os.urandom(16)
+        iv = sha(ivkey+g.password)
+        fin = open(path,"rb")
+        h = sha(fin.read())
+        fin.close()
+        fout = open("iv_table.txt","a")
+        fout.write(h+":"+ivkey+"\n") #store the ivkey for decrypting the file later
+        fout.close()
+        ciphertext = []
+        easyaes.encrypt(path,ciphertext,iv)
+        ciphertext = "".join(ciphertext)
+        
+        r = upload(ciphertext)
+        print "File sent,", r, "blocks resent"
