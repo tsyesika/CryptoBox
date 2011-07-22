@@ -18,7 +18,7 @@ def makeheader(first,*args):
         elif type(arg) == int:
             header += struct.pack("i",arg) + ":"
         elif type(arg) == float:
-            head += struct.pack("f",arg) + ":"
+            header += struct.pack("f",arg) + ":"
         else:
             raise Exception("Unsupported type (can only pack strings, ints and floats")
     header += "|"
@@ -64,11 +64,11 @@ def upload():
     path = raw_input("Enter path to file:\n")
     length = int(ceil(os.stat(path).st_size/16.0)) #now length is number of blocks
     message = makeheader(3,struct.pack("i",length)) #add a block to length, just to be safe
-    #socket.send(message) #send request has no body
-    #reply = socket.recv(1)
-    #if ord(reply) != 1:
-     #   print "Upload request denied. Sorry."
-      #  return
+    socket.send(message) #send request has no body
+    reply = socket.recv(1)
+    if ord(reply) != 1:
+        print "Upload request denied. Sorry."
+        return
     
     ciphertext = []
     ivkey = os.urandom(16)
@@ -76,19 +76,19 @@ def upload():
     fin = open(path,"rb")
     h = sha(fin.read())
     fin.close()
-    fout = open("client_data.txt","a")
-    fout.write(h+":"+ivkey) #store the ivkey for decrypting the file later
+    fout = open("iv_table.txt","a")
+    fout.write(h+":"+ivkey+"\n") #store the ivkey for decrypting the file later
     fout.close()
 
     easyaes.encrypt(path,ciphertext,iv)
-    totallength = 0
+    # SEND HEAD
     exactlength = struct.calcsize("L")+64+(len(ciphertext)-1)*16 + int(ceil(len(ciphertext)/16.0))*64
     #            lengthmarker +lengthmarkerhash + ciphertext + ciphertexthashes
     message = makeheader(4,struct.pack("i",exactlength))
     socket.send(message)
-    #<body>
+    # SEND BODY
     socket.send(ciphertext[0]) #plaintext length marker
-    socket.send(sha(ciphertext[0]) #hash of marker
+    socket.send(sha(ciphertext[0])) #hash of marker
     cursor = 1
     while cursor < len(ciphertext):
         if len(ciphertext[cursor:]) >= 16:
@@ -97,9 +97,7 @@ def upload():
             block = "".join(ciphertext[cursor:])
         socket.send(block)
         socket.send(sha(block))
-        totallength += len(block) + len(sha(block))
         cursor += 16
-    #message ends
     
 
 #message header 1st bytes:

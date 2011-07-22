@@ -6,22 +6,40 @@
 
 import socket, hashlib, thread, server_config, ssl
 
+def sha(x):
+    return hashlib.sha512(x).digest()
+
 def authenticate(sock):
         ID = sock.recv(128) #receive email and password hash from client
         email = ID[:64]
         email = email[email.index(chr(0))] #shave off the padding
         passhash = ID[:64]
+        #now check against the database
+
+def new_account(sock):
+        ID = sock.recv(128) #receive email and password hash from client
+        email = ID[:64]
+        email = email[email.index(chr(0))] #shave off the padding
+        passhash = ID[:64]
+        salt = os.urandom(32)
+        storepass = sha(salt+passhash)
+        #now put it in a database or something
+        sock.send(chr(1)) #signal a successful account creation
 
 def Connection_Handler(sock):
 	""" Handles new connections to server """
+	header = ""
 	while True:
-                header = sock.recv(4)
-                handler = ord(header[0])
-                handlers[handler](sock)
+                header += sock.recv(1)
+                if header[-1] == "|":
+                        #found end of header
+                        args = header.split(":")[1:-1]
+                        handler = ord(header[0])
+                        handlers[handler](sock,*args)
                 
-	
 handlers = {
         1:authenticate
+        2:new_account
         }
 
 if __name__ == "__main__":
