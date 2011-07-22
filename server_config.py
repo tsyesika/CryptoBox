@@ -13,6 +13,6 @@ bind_port = 7272
 ipv6 = False
 
 # SSL Bind 
-sslwrap = True
+sslwrap = False
 
 # -- Todo (add options of for certificates)
