@@ -7,6 +7,14 @@
 import socket, os, hashlib, thread, server_config, ssl, struct
 from math import ceil as __ceil__
 
+# if config.database_type == "mysql":
+#	import db.mysql as db
+# elif config.database_type == "sqlite":
+#	import db.sqlite as db
+# elif config.database_type == "pickle":
+#	import db.pickle as db
+# else:
+# 	raise # some kinda error as no database has been selected?
 
 def sha(x):
         return hashlib.sha512(x).digest()
@@ -38,10 +46,26 @@ def authenticate(sock):
         email = ID[:64]
         email = email[email.index(chr(0))] #shave off the padding
         passhash = ID[:64]
-        #now check against the database
+		
+		# salt = db.getsalt(dbc, email)
+		# if salt[0]: salt = salt[0]
+		# else: #incorrect :(
+
+        passhash = sha(passhash) # + salt?
+		#now check against the database
+
+		# res = db.login(dbc, email, pass)
+		# if res[0]:
+			# Correct
+		# else:
+			# Incorrect
+		
         sock.send(chr(1)) #YES MR TEST I CAN SEE FROM MY DATABASE THAT YOU DO INDEED OWN THIS ACCOUNT HERE HAVE SOME FILES
 
 def new_account(sock):
+		
+		# Is this needed?
+	
         ID = sock.recv(128) #receive email and password hash from client
         email = ID[:64]
         email = email[email.index(chr(0))] #shave off the padding
@@ -171,13 +195,17 @@ handlers = {
         }
 
 if __name__ == "__main__":
+	#setup database
+	# dbc = db.init()
+	# if not dbc[0]: raise dbc[1] # Couldn't connect with db
+	
     # Setup port
     if server_config.ipv6:
         sock = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
     else:
         sock = socket.socket()
-        sock.bind(('localhost',7282))
-        sock.listen(5)
+    sock.bind(('localhost',7282)) # change back to config info
+    sock.listen(5)
     while True:
         print sock
         clientsock, addr = sock.accept()
