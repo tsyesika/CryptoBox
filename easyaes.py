@@ -15,9 +15,22 @@ def getfileobject(path,writemode):
     else:
         return open(path,"rb")
 
-def encrypt(plaintext,out,iv):
+def sha(x):
+    return hashlib.sha512(x).digest()
+
+def initialize(email,password):
+    global aes_cbc_256
+    key = bytearray(sha(email+password)[:32])
+    #using AES-256, CBC mode
+    key_expander_256 = key_expander.KeyExpander(256) #(256 bit key)
+    expanded_key = key_expander_256.expand(key) #produces a longer, usable key
+    aes_cipher_256 = aes_cipher.AESCipher(expanded_key)
+    aes_cbc_256 = cbc_mode.CBCMode(aes_cipher_256, 16) #16 bits = block size
+
+def encrypt(plaintext,out,password):
     #takes a file plaintext
     #outputs ciphertext to either a file or a list
+    plaintext = getfileobject(plaintext,False)
     plaintext.seek(0,os.SEEK_END)
     length = plaintext.tell() #get file length, so the decrypter knows how many bytes padding to ignore
     plaintext.seek(0) #put the cursor back to the start of the file
@@ -33,6 +46,15 @@ def encrypt(plaintext,out,iv):
         #out is not a list, file or path
         raise TypeError("out must be a list, file or path string")    
 
+    #CREATE AN IV AND STORE ITS KEY FOR GENERATION WHEN IT'S DECRYPTION TIME
+    ivkey = os.urandom(16)
+    iv = sha(ivkey+password)
+    h = sha(plaintext.read())
+    plaintext.seek(0)
+    fout = open("iv_table.txt","a")
+    fout.write(h+":"+ivkey+"\n") #store the ivkey for decrypting the file later
+    fout.close()
+    
     aes_cbc_256.set_iv(iv)
     while True:
         plainblock = bytearray(plaintext.read(16)) #16-byte blocks
@@ -91,10 +113,5 @@ def decrypt(ciphertext,out,iv):
     if readfromfile:
         ciphertext.close()
 
-salt = '\xe1(\xfe\xfb\xba\xad\xd4\x8c\xb8ZZ\x86\x08\xc9\x1c\x95>\xa3\xb3\xc0pr\r\xc2\x9c[\xa7>\xfa\x0c\xc8\xc6'
-key = bytearray(hashlib.sha512("password"+salt).digest()[:32])
-#using AES-256, CBC mode
-key_expander_256 = key_expander.KeyExpander(256) #(256 bit key)
-expanded_key = key_expander_256.expand(key) #produces a longer, usable key
-aes_cipher_256 = aes_cipher.AESCipher(expanded_key)
-aes_cbc_256 = cbc_mode.CBCMode(aes_cipher_256, 16) #16 bits = block size
+
+aes_cbc_256 = None
