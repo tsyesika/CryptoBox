@@ -269,24 +269,25 @@ def dirwatch():
             g.resettimer = True  #keep resetting the timer when more events come through, to make sure handleDirEvent gets all of them
         g.events.extend(results)
 
-#message header 1st bytes:
-#1 - authentication request
-#2 - new account request
-#3 - send request (followed by approximate file size)
-#4 - incoming file (next four bytes store number of 16-byte blocks in file as an integer)
-#5 - delete file
-g = _globals()
-g.loggedin = False
-g.events = []
-g.resettimer = False
-g.rootdir = "C:\Users\Philip\python\cryptobox"
+if __name__ == "__main__":
+	#message header 1st bytes:
+	#1 - authentication request
+	#2 - new account request (Remove?)
+	#3 - send request (followed by approximate file size)
+	#4 - incoming file (next four bytes store number of 16-byte blocks in file as an integer)
+	#5 - delete file
+	g = _globals()
+	g.loggedin = False
+	g.events = []
+	g.resettimer = False
+	g.rootdir = "C:\Users\Philip\python\cryptobox"
 
-socket = socket.socket()
-print "Connecting..."
-socket.connect(('localhost',7282))
-print "Connected"
+	socket = socket.socket()
+	print "Connecting..."
+	socket.connect(('localhost',7282))
+	print "Connected"
 
-authenticate()
+	authenticate()
 
-def crash():
-    socket.send("#")
+	def crash():
+	    socket.send("#")

@@ -2,7 +2,7 @@
 import sqlite3, os
 
 def init(x):
-	"""Starts a connection with database 'x'"""
+	""" Starts a connection with database 'x' """
 	installed = False
 	if os.path.isfile(x.database_name):
 		installed = True
@@ -48,7 +48,7 @@ def install(x):
 	# NB: Encrypted & Individual only hold 0 or 1 so bool (does it exist? or TINYINT?) - both need moe research if sqlite supports..
 
 def close(x):
-	"""Commits and closes database connection (give connection tuple as x)"""
+	""" Commits and closes database connection (give connection tuple as x) """
 	x[0].commit()
 	x[1].close()
 	return [True, ""]
