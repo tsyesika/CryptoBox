@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 ##
 # Server Config
 # Version 0.1
@@ -24,7 +25,7 @@ sslwrap = False
 
 # Database type (mysql, sqlite or pickle)
 # NB: Pickle is only accessable by python...
-database_type = ""
+database_type = "sqlite"
 
 ##
 # mysql options
@@ -47,5 +48,5 @@ database_name = ""
 ##
 
 #name of database (also path)
-database_name = ""
+database_name = "test"
 
