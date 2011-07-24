@@ -5,9 +5,9 @@ def getfileobject(path,writemode):
     if type(path) == file:
         return path
     pathsplit = os.path.split(path)
-    if not os.path.exists(pathsplit[0]) or not (os.path.exists(pathsplit[1]) or writemode):
+    if not os.path.exists(pathsplit[0]) or not (os.path.exists(path) or writemode):
         raise Exception("Invalid path %s" % path)
-    if not os.path.exists(pathsplit[1]): #invalid path tail
+    if not os.path.exists(path): #invalid path tail
         print "Creating new file for writing called", path
         return open(path,"wb")
     if writemode:
