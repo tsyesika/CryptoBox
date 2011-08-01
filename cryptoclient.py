@@ -1,4 +1,6 @@
 #CryptoBox client
+
+# Is this a windows only client?
 import socket, ssl, os, hashlib, struct, easyaes, win32file, win32con, thread, traceback, time
 from math import ceil as __ceil__
 
