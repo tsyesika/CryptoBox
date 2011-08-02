@@ -40,41 +40,41 @@ def install(x):
 		Individual INT
 	);""")
 	
-	x[0].commit()
+	x[1].commit()
 	
 	# Although some file systems like resierfs and also ntfs (in combo with windows) allow greater than 255
 	# the sql limit is usually 255 for vchar so I've used that as a fixed limit.
 	
-	# NB: Encrypted & Individual only hold 0 or 1 so bool (does it exist? or TINYINT?) - both need moe research if sqlite supports..
+	# NB: Encrypted & Individual only hold 0 or 1 so bool (does it exist? or TINYINT?) - both need more research if sqlite supports..
 
 def close(x):
 	""" Commits and closes database connection (give connection tuple as x) """
-	x[0].commit()
-	x[1].close()
+	x[1].commit()
+	x[0].close()
 	return [True, ""]
 
 def login(x, email, password):
 	""" Checks if user with said email and password is correct first element of return arg will be true if valid."""
-	x[0].execute("SELECT * FROM Users WHERE Email='?' AND Password='?'", (email, password))
+	x[0].execute("SELECT * FROM Users WHERE Email=? AND Password=?", (email, password))
 	if x[0].fetchall() == []:
 		return [False, "Login Incorrect"]
 	return [True, ""]
 
 def addfile(x, uid, filepath, clonepath, fhash, dateupload, filesize, encrypted=1, individual=0):
 	""" Adds a file to db """
-	x[0].execute("SELECT * FROM Files WHERE UID=? AND FilePath='?' AND Hash='?'", (uid, filepath, fhash))
+	x[0].execute("SELECT * FROM Files WHERE UID=? AND FilePath=? AND FHash=?", (uid, filepath, fhash))
 	if x[0].fetchall() == []:
-		x[0].execute("INSERT INTO Files(UID, FilePath, ClonePath, FHash, DateUploaded, FileSize, Encrypted, Individual) VALUES(?, '?', '?', '?', '?', ?, ?, ?)", (uid, filepath, clonepath, fhash, dateuploaded, filesize, encrypted, individual))
+		x[0].execute("INSERT INTO Files(UID, FilePath, ClonePath, FHash, DateUploaded, FileSize, Encrypted, Individual) VALUES(?, ?, ?, ?, ?, ?, ?, ?)", (uid, filepath, clonepath, fhash, dateupload, filesize, encrypted, individual))
 	else:
 		return [False, "File Already Exists."]
 	return [True, ""]
 	
-def rmfile(x, uid, filepath, fhash):
+def rmfile(x, uid, filepath):
 	""" Removes a file from db """
-	x[0].execute("SELECT * From Files WHERE UID=? AND FilePath='?' AND FHash='?'", (uid, filepath, fhash))
+	x[0].execute("SELECT * From Files WHERE UID=? AND FilePath=?", (uid, filepath))
 	if x[0].fetchall() == []:
 		return [False, "Can't find file"]
-	x[0].execute("DELETE FROM Files WHERE UID=? AND FilePath='?' AND FHash='?'", (uid, filepath, fhash))
+	x[0].execute("DELETE FROM Files WHERE UID=? AND FilePath=?", (uid, filepath))
 	return [True, ""]
 
 def calculateused(x, uid):
@@ -84,7 +84,7 @@ def calculateused(x, uid):
 	
 def getsalt(x, email):
 	""" Gets salt for user """
-	x[0].execute("SELECT Salt FROM Users WHERE Email='?'", (email,))
+	x[0].execute("SELECT Salt FROM Users WHERE Email=?", (email,))
 	res = x[0].fetchall()
 	if res:
 		return [res[0][0], ""]
