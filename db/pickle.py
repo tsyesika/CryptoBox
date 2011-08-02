@@ -1,20 +1,34 @@
 # -*- coding: utf-8 -*-
-import shelve, os
+import os
 
 def init(x):
 	""" Starts a connection with database 'x' """
-	return [shelve.open(x.database_name), ""]
+	if not os.path.isfile(x.database_name):
+		nf = open(x.database_name, "w+")
+		n = {}
+		install(n)
+	else:
+		nf = open(x.database_name, "r+")
+		n = eval(nf.read())
+	return [(n, nf), ""]
 
+def install(x):
+	""" Creates Users and Files Table """
+	x["Users"] = {}
+	x["Files"] = {}
+	
 def close(x):
 	""" Syncs and closes database connection """
-	x.sync()
-	x.close()
+	if x[1].closed:
+		return [False, "File closed"]
+	x[1].write(str(x[0]))
+	x[1].close()
 
 def login(x, email, password):
 	""" Checks if user with said email and password is correct first element of return arg will be true if valid """
 	# {"Users":{email:{UID:0, Password:"", Salt:""}, "Files":{uid:{filepath:[filepath, clonepath, hash, dateuploaded, filesize, encrypted, individual]}}}
-	if email in x[0].keys():
-		if x["Users"][email]["Password"] == password:
+	if email in x[0]["Users"].keys():
+		if x[0]["Users"][email]["Password"] == password:
 			return [True, ""]
 		else:
 			return [False, "Login Incorrect"]
@@ -24,18 +38,17 @@ def addfile(x, uid, filepath, clonepath, fhash, dateupload, filesize, encrypted=
 	""" Adds a file to the db """
 	if uid in x[0]["Files"].keys() and filepath in x[0]["Files"][uid].keys():
 		return [False, "File Already Exists."]
-	if not uid in x["Files"]:
-		x[0]["Files"][uid] = {filepath:[clonepath, fhash, dateuploaded, filesize, encrypted, individual]}
+	if not uid in x[0]["Files"]:
+		t = x
+		x[0]["Files"][uid] = {filepath:[clonepath, fhash, dateupload, filesize, encrypted, individual]}
 	else:
-		x[0]["Files"][uid][filepath] = [clonepath, fhash, dateuploaded, filesize, encrypted, individual]
+		x[0]["Files"][uid][filepath] = [clonepath, fhash, dateupload, filesize, encrypted, individual]
 	return [True, ""]
 
-def rmfile(x, uid, filepath, fhash):
+def rmfile(x, uid, filepath):
 	""" Removes a file from db """
 	if uid in x[0]["Files"].keys() and filepath in x[0]["Files"][uid].keys():
-		ntemp = x[uid]
-		del ntemp[filepath]
-		x[uid] = ntemp
+		del x[0]["Files"][uid][filepath]
 		return [True, ""]
 	return [False, "Can't find file"]
 
@@ -46,7 +59,7 @@ def calculateused(x, uid):
 def getsalt(x, email):
 	""" Gets salt for user """
 	if email in x[0]["Users"].keys():
-		return [x["Users"][email]["Salt"], ""]
+		return [x[0]["Users"][email]["Salt"], ""]
 	return [False, "User does not exist."]
 
 	
