@@ -80,7 +80,7 @@ def rmfile(x, uid, filepath, fhash):
 def calculateused(x, uid):
 	""" calculates total file size. """
 	x[0].execute("SELECT filesize FROM Files WHERE UID=?", (uid,))
-	return [sum([x1[0] for x1 in ix[0].fetchall()]), ""]
+	return [sum([x1[0] for x1 in x[0].fetchall()]), ""]
 	
 def getsalt(x, email):
 	""" Gets salt for user """
