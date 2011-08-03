@@ -1,0 +1,162 @@
+# CryptoBox Technical Documentation
+## Contents
+<!-- Add contents -->
+## Database
+The database offers a generic API for Pickle, sqlite and also mysql. Regardless of your choice how you make calls is identical. Your choice is made in the server configuration file.
+
+An import usually names the module as a generic name for example **dbapi** which can be done using the as keyword. For example to import the sqlite api you would do:
+
+` import db.sqlite as dbapi`
+
+
+The functions for each of the API's return a list, if it was successful the second argument (index 1) will be False (empty string). If the call was unsuccessful the first argument in the list (index 0) will be False and the second (index 1) will be an error message.
+
+Successful call:
+
+`dbapi.login(x, "example@googlemail.com", "CorrectPassword")`
+
+`# return: [True, ""]`
+
+
+Erroneous call:
+
+`dbapi.login(x, "example@googlemail.com", "WrongPassword")`
+
+`# return: [False, "Login Incorrect"]`
+
+#### Functions
+**init**
+
+This function initalises the database, it will return in its first element of the list (index 0) ether the database connection (be type tuple) or a dictionary and file channel (also type tuple). When failure happens False will return as the first element (index 0) and an error message in the second element (index 1). Its recomended you do a check to see the second element is an empty list (successful) rather than simply assuming its been a successful call. You can do this by:
+
+` x = dbapi.init(config) `
+
+` if not x[1]: raise x[1] `
+
+` x = x[0] `
+
+Successful call:
+
+` x = dbapi.init(config) `
+
+` # return: [True, ""] `
+
+
+Erroneous call:
+
+` x = dbapi.init(config) `
+
+` # return: [False, "Cannot connect to the database. ('CryptoBoxDB')"] `
+
+
+**install**
+
+Designed only for internal use, this will setup the database if one if noe previously setup. 
+
+
+**close**
+
+Its imperative you close the connection once you're done (even when failure occurs). This call will make sure that the database changes have been commited and then the connection closed. A call to this is assumed to be successful so will only ever return True. 
+
+Call:
+
+` dbapi.close(x) `
+
+` #returns: [True, ""] `
+
+
+**login**
+
+This will allow you to check if a email and password match in the database, its suggested you use hashing however that isn't provided in the database API (hoever salt support is). Email and passwords are automatically escaped for you.
+
+Successful call:
+
+` dbapi.login(x, "example@googlemail.com", "WrongPassword") `
+
+` # returns: [True, ""] `
+
+
+Erroneous call:
+
+` dbapi.login(x, "example@googlemail.com", "CorrectPassword") `
+
+` #returns: [False, "Login Incorrect"] `
+
+
+**addfile**
+
+This will allow you to add a file outline to the database (note files are expected to be externally stored. This will store key information about the file such as its loation, a clone of the file, its hash, size, date it was uploaded, if its encrypted (should nearly always be true besides public facing files) and if it was part of syncing or if its an indevidual file. All arguments are escaped before passed.
+
+Successful call:
+
+` dbapi.addfile(x, 0, "/home/Cryptobox/example/sky.png", "/home/backup/example/sky.png", "d029f87e3d80f8fd9b1be67c7426b4cc1ff47b4a9d0a8461c826a59d8c5eb6cd", 72) `
+
+` #returns: return [True, ""] `
+
+
+Erroneous call:
+
+` dbapi.addfile(x, 0, "/home/Cryptobox/example/sky.png", "/home/backup/example/sky.png", "d029f87e3d80f8fd9b1be67c7426b4cc1ff47b4a9d0a8461c826a59d8c5eb6cd", 72) `
+
+` #returns: [False, "File Already Exists."] `
+
+
+**rmfile**
+
+This will remove a file from the database (won't touch any files on the file system). Like addfile all the arguments are escaped that are passed. This only needs however the user id and filepath as those combind will give a unique identifier.
+
+Successful call:
+
+` dbapi.rmfile(x, 0, "/home/Cryptobox/example/sky.png") `
+
+` #returns: [True, ""] `
+
+
+Erroneous call:
+
+` dbapi.rmfile(x, 0, "/to/non/existant/path") `
+
+` #returns: [False, "File Already Exists."] `
+
+
+**calculateused**
+
+This will calculated the space used on the server. Note this call is assumed to be successful so has no failure, the first element (index 0) can be false as 0 will evaluate to a false bool value however if the user has a valid account but has not uploaded anyfiles the space used will remain 0. 
+
+Call:
+
+` dbapi.calculateused(x, 0) `
+
+` #returns: [72, ""] `
+
+**getsalt**
+
+This will allow you get a salt tied to a users account allowing you to then peform a salted hash (more information about salts [here](http://en.wikipedia.org/wiki/Salt_(cryptography\) "Salt (cryptography)")). 
+
+Successful call:
+
+` dbapi.getsalt(x, "example@googlemail.com") `
+
+` #returns: ["dwe5SR^G8TTxkO1!", ""] `
+
+
+Erroneous call:
+
+` dbapi.getsalt(x, "example@googlemail.com") `
+
+` #returns: [False, "Couldn't find user."] `
+
+
+### Pickle
+
+CryptoBoxes pickle implementation doesn't actually pickle the output as there should be no sensative data in there and the database shoudln't be avalable to anyone else (providing permissions have been set correctly). This solution will be slow and use a lot of RAM if you have a lot of users or files and should only be used on a very small scale (such as private solo useage). This doesn't require any third party modules to work.
+
+### Sqlite
+
+This is a great solution for those who don't need remote access to the database, this has the benifit of not holding the all the data in RAM and has some low level optomisations done by the sqlite3 module. This is highly scalable from using for solo usage to a large amount of users and file. If your server solution is split over multiple nodes or in the future you might need to access the data in the databases remotely its suggested you use the mysql database api.
+
+### MySQL
+
+This is again highly scalable but can be a pain to setup, this however comes with the advantage of being able to access remotely which can be a huge advantage, it also allows you to specify permissions where as Sqlite doesn't. This also should have performance advantages over Sqlite and pickle (providing its local as network can increase query time significantly). 
+
+
