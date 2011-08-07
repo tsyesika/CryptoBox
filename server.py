@@ -76,7 +76,7 @@ def new_account(sock):
 def handle_send_request(sock,filesize):
         #make sure there's enough room on the server
         #xray, you handle this, i don't have a clue
-        #remember, filesize is in 16-byte blocks!
+        filesize = int(filesize)
         sock.send(chr(1)) #for now we'll just say yes
 
 def receive_file(sock,path,exactsize):

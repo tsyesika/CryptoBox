@@ -64,8 +64,8 @@ def new_account():
         print "Fail"
 
 def request_send(path):
-    length = ceil(os.stat(path).st_size,16) #now length is number of blocks
-    message = makeheader(3,length+1) #add a block to length, just to be safe
+    length = ceil(os.stat(path).st_size,16)*16 +25 6 #now length is a generous estimate of ciphertext filesize
+    message = makeheader(3,length)
     socket.send(message) #send request has no body
     reply = socket.recv(1)
     if ord(reply) != 1:
@@ -296,7 +296,7 @@ if __name__ == "__main__":
 
 	socket = socket.socket()
 	print "Connecting..."
-	socket.connect(('localhost',7273))
+	socket.connect(('localhost',7272))
 	print "Connected"
 
 	authenticate()
