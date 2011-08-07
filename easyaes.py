@@ -51,7 +51,7 @@ def encrypt(plaintext,out,password):
     iv = sha(ivkey+password)
     h = sha(plaintext.read())
     plaintext.seek(0)
-    fout = open("iv_table.txt","a")
+    fout = open(r"C:\Users\Philip\python\iv_table.txt","a")
     fout.write(h+":"+ivkey+"\n") #store the ivkey for decrypting the file later
     fout.close()
     

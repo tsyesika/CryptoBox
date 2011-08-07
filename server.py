@@ -4,7 +4,7 @@
 # Developed by Jessica T. & Philip J.
 ##
 
-import socket, os, hashlib, thread, server_config, ssl, struct
+import socket, os, hashlib, thread, server_config, ssl
 from math import ceil as __ceil__
 
 # if config.database_type == "mysql":
@@ -24,17 +24,15 @@ def makeheader(first,*args):
     first should be an int in the range 0 <= first <= 255
     Any following arguments can be anything, and will be placed in consecutive header fields.
     """
-    header = chr(first) + chr(200)*bool(args)
+    header = chr(first) + chr(0)*bool(args)
     for arg in args:
         if type(arg) == str:
-            header += arg + chr(200)
-        elif type(arg) == int:
-            header += struct.pack("i",arg) + chr(200)
-        elif type(arg) == float:
-            header += struct.pack("f",arg) + chr(200)
+            header += arg + chr(0)
+        elif type(arg) == int or type(arg) == float:
+            header += str(arg) + chr(0)
         else:
-            raise Exception("Unsupported type (can only pack strings, ints and floats")
-    header += "|"
+            raise Exception("Unsupported type (can only send strings, ints and floats")
+    header += chr(255) #i'd really prefer to use something like : and | as delimiters, but since there doesn't seem to be a single character that doesn't appear in file paths on any system, I'm using non-printable characters
     return header
 
 def ceil(x,y):
@@ -78,6 +76,7 @@ def new_account(sock):
 def handle_send_request(sock,filesize):
         #make sure there's enough room on the server
         #xray, you handle this, i don't have a clue
+        #remember, filesize is in 16-byte blocks!
         sock.send(chr(1)) #for now we'll just say yes
 
 def receive_file(sock,path,exactsize):
@@ -101,14 +100,7 @@ def rename(sock,pathold,pathnew):
         pass
 
 def upload(data):
-    """ Sends a large string data to the client, using sha to ensure integrity """
-    # SEND HEAD
-    exactlength = len(data)+ceil(len(data),256)*64
-    print len(data), ceil(len(data),256), exactlength
-    #      length of file   + number of hashes   *  64 bytes per hash
-    message = makeheader(4,struct.pack("i",exactlength))
-    socket.send(message)
-    # SEND BODY
+    """ Sends a large string data to the server, using sha to ensure integrity """ 
     cursor = 0
     while cursor < len(data):
         if len(data) - cursor >= 256:
@@ -120,28 +112,33 @@ def upload(data):
         cursor += 256
 
     #wait for acknowledgement from server
+    resend = ""
     while True:
-        resend = ""
         resend += socket.recv(1)
-        if resend[-1] == "|":
-            resend = [struct.unpack("i",i) for i in resend.split(chr(200))[:-1]]
+        if resend[-1] == chr(255):
+            print resend
+            resend = [int(i) for i in resend.split(chr(0))[:-1]]
             break
     print "resend =", resend
     for i in resend:
         #resend corrupted blocks
         print "resending block", i
+        socket.send(
+            makeheader(4, min(256,len(data)-i))
+            )
         upload(data[ i : min(i+256,len(data)) ])
     return len(resend)
 
 def download(sock,exactsize):
     """ Receives a file, checking a hash after every 256 bytes """
-    exactsize = struct.unpack("i",exactsize)[0]
+    exactsize = int(exactsize)
     bytesreceived = 0
     resend = []
     bytestream = ""
     while bytesreceived < exactsize:
         block = sock.recv(min(exactsize-bytesreceived-64,256))
         HASH = sock.recv(64)
+        print "got block", len(block), len(HASH)
         #check block
         if sha(block) != HASH:
             #add a resend request
@@ -152,8 +149,9 @@ def download(sock,exactsize):
     print len(resend), "out of", ceil(exactsize,256), "blocks corrupted"
     message = ""
     for i in resend: #i for index (in the original, unhashed bytestream back on clientside)
-        message += struct.pack("i",i) + chr(200)
-    message += "|"
+        raise
+        message += str(i) + chr(0)
+    message += chr(255)
     sock.send(message)
     print "sent acknowledgement:", message
     for i in resend:
@@ -172,19 +170,20 @@ def receive_header(sock):
         header += sock.recv(1)
         if header == "#":
                 raise
-        if header[-1] == "|":
+        if header[-1] == chr(255):
             #found end of header
-            args = header.split(chr(200))[1:-1]
+            args = header.split(chr(0))[1:-1]
             return ord(header[0]), args
 
 def Connection_Handler(sock):
     """ Handles new connections to server """
     while True:
+        print
         print "Waiting for a header..."
         TYPE, args = receive_header(sock)
         print "got header", TYPE, args
         handlers[TYPE](sock,*args)
-        print "dealt with"
+        print "dealt with it"
 
 handlers = {
         1:authenticate,
@@ -204,7 +203,7 @@ if __name__ == "__main__":
         sock = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
     else:
         sock = socket.socket()
-    sock.bind(('localhost',7282)) # change back to config info
+    sock.bind(('localhost',7272)) # change back to config info
     sock.listen(5)
     while True:
         print sock

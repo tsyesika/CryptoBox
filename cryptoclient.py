@@ -1,7 +1,5 @@
 #CryptoBox client
-
-# Is this a windows only client?
-import socket, ssl, os, hashlib, struct, easyaes, win32file, win32con, thread, traceback, time
+import socket, ssl, os, hashlib, easyaes, win32file, win32con, thread, traceback, time
 from math import ceil as __ceil__
 
 class _globals():
@@ -19,17 +17,15 @@ def makeheader(first,*args):
     first should be an int in the range 0 <= first <= 255
     Any following arguments can be anything, and will be placed in consecutive header fields.
     """
-    header = chr(first) + chr(200)*bool(args)
+    header = chr(first) + chr(0)*bool(args)
     for arg in args:
         if type(arg) == str:
-            header += arg + chr(200)
-        elif type(arg) == int:
-            header += struct.pack("i",arg) + chr(200)
-        elif type(arg) == float:
-            header += struct.pack("f",arg) + chr(200)
+            header += arg + chr(0)
+        elif type(arg) == int or type(arg) == float:
+            header += str(arg) + chr(0)
         else:
-            raise Exception("Unsupported type (can only pack strings, ints and floats")
-    header += "|"
+            raise Exception("Unsupported type (can only send strings, ints and floats")
+    header += chr(255) #i'd really prefer to use something like : and | as delimiters, but since there doesn't seem to be a single character that doesn't appear in file paths on any system, I'm using non-printable characters
     return header
 
 def getemailandpasshash():
@@ -69,7 +65,7 @@ def new_account():
 
 def request_send(path):
     length = ceil(os.stat(path).st_size,16) #now length is number of blocks
-    message = makeheader(3,struct.pack("i",length+1)) #add a block to length, just to be safe
+    message = makeheader(3,length+1) #add a block to length, just to be safe
     socket.send(message) #send request has no body
     reply = socket.recv(1)
     if ord(reply) != 1:
@@ -79,21 +75,23 @@ def request_send(path):
 
 def send_file(path):
     cipher = []
+    print "Encrypting..."
     easyaes.encrypt(path,cipher,g.password) #easyaes needs your password to make an IV)
+    print "Done"
     cipher = "".join(cipher)
     
     exactlength = len(cipher)+ceil(len(cipher),256)*64
+    print len(cipher), ceil(len(cipher),256)*64
     #       length of file    + number of hashes   *  64 bytes per hash
-    message = makeheader(4,path,struct.pack("i",exactlength))
+    # SEND HEAD
+    message = makeheader(4,path,exactlength)
     socket.send(message)
+    # SEND BODY
     r = upload(cipher)
     print "File sent,", r, "blocks resent"
     
 def upload(data):
-    """ Sends a large string data to the server, using sha to ensure integrity """
-    # SEND HEAD
-    
-    # SEND BODY
+    """ Sends a large string data to the server, using sha to ensure integrity """ 
     cursor = 0
     while cursor < len(data):
         if len(data) - cursor >= 256:
@@ -105,22 +103,26 @@ def upload(data):
         cursor += 256
 
     #wait for acknowledgement from server
+    resend = ""
     while True:
-        resend = ""
         resend += socket.recv(1)
-        if resend[-1] == "|":
-            resend = [struct.unpack("i",i) for i in resend.split(chr(200))[:-1]]
+        if resend[-1] == chr(255):
+            print resend
+            resend = [int(i) for i in resend.split(chr(0))[:-1]]
             break
     print "resend =", resend
     for i in resend:
         #resend corrupted blocks
         print "resending block", i
+        socket.send(
+            makeheader(4, min(256,len(data)-i))
+            )
         upload(data[ i : min(i+256,len(data)) ])
     return len(resend)
 
-def download(exactsize):
+def download(sock,exactsize):
     """ Receives a file, checking a hash after every 256 bytes """
-    exactsize = struct.unpack("i",exactsize)[0]
+    exactsize = int(exactsize)
     bytesreceived = 0
     resend = []
     bytestream = ""
@@ -137,8 +139,8 @@ def download(exactsize):
     print len(resend), "out of", ceil(exactsize,256), "blocks corrupted"
     message = ""
     for i in resend: #i for index (in the original, unhashed bytestream back on clientside)
-        message += struct.pack("i",i) + chr(200)
-    message += "|"
+        message += str(i) + chr(0)
+    message += chr(255)
     sock.send(message)
     print "sent acknowledgement:", message
     for i in resend:
@@ -170,13 +172,17 @@ def remote_rename(pathold,pathnew):
 def timer():
     time.sleep(1)
     try:
-        handleDirEvent()
+        g.queue.append(g.events)
+        g.events = []
+        if not g.processing:
+            g.processing = True
+            handleDirEvent()
+            g.processing = False
     except:
         traceback.print_exc()
     
 def handleDirEvent():
-    events = g.events
-    g.events = []
+    events = g.queue.pop(0)
     print events
     summary = "".join([event[0] for event in events])
     print summary
@@ -205,6 +211,7 @@ def handleDirEvent():
         print "Warning: unrecognised signature:"
         print events
         print summary
+    #now actually process the event
     while events:
         a = events.pop(0)
         if two:
@@ -212,6 +219,10 @@ def handleDirEvent():
             f(a[1],b[1])
         else:
             f(a[1])
+    if g.queue:
+        #the user's changed something in the directory while the last change
+        #was being processed
+        handleDirEvent()
                     
 
 def dirwatch():
@@ -256,20 +267,17 @@ def dirwatch():
         None
         )
         results = [(ACTIONS[action],os.path.join(g.rootdir,str(path))) for action, path in results]
-        #                                                 ^ (paths are in unicode by default)
+        #                                                   ^ (paths are in unicode by default)
         print "tick"
         if results:
-            try:
-                if results[0][0] == "F": #renamed file
-                    crash()
-            except:
-                print results
-                raise
+            if results[0][0] == "F": #renamed file
+                crash()
         if not g.events:
             thread.start_new_thread(timer,())
-        else:
-            g.resettimer = True  #keep resetting the timer when more events come through, to make sure handleDirEvent gets all of them
         g.events.extend(results)
+
+def crash():
+	socket.send("#")
 
 if __name__ == "__main__":
 	#message header 1st bytes:
@@ -283,13 +291,13 @@ if __name__ == "__main__":
 	g.events = []
 	g.resettimer = False
 	g.rootdir = "C:\Users\Philip\python\cryptobox"
+	g.queue = []
+	g.processing = False
 
 	socket = socket.socket()
 	print "Connecting..."
-	socket.connect(('localhost',7282))
+	socket.connect(('localhost',7273))
 	print "Connected"
 
 	authenticate()
-
-	def crash():
-	    socket.send("#")
+	dirwatch()
