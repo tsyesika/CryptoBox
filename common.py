@@ -29,10 +29,13 @@ def makeheader(first,*args):
     header += chr(255) #i'd really prefer to use something like : and | as delimiters, but since there doesn't seem to be a single character that doesn't appear in file paths on any system, I'm using non-printable characters
     return header
 
-def request_send(path):
-    length = ceil(os.stat(path).st_size,16)*16 + 256 #now length is a generous estimate of ciphertext filesize
-    message = makeheader(3,length)
-    socket.send(message) #send request has no body
+def request_send(path,exactsize=None):
+    if not exactsize:
+            length = ceil(os.stat(path).st_size,16)*16 + 256 #now length is a generous estimate of ciphertext filesize
+            message = makeheader(3,length)
+            socket.send(message) #send request has no body
+    else:
+            socket.send(makeheader(3,exactsize))
     reply = socket.recv(1)
     if ord(reply) != 1:
         print "Upload request denied. Sorry."

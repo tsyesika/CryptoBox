@@ -54,6 +54,36 @@ def new_account(sock):
         #now put it in a database or something
         sock.send(chr(1)) #signal a successful account creation
 
+def sock_email(sock):
+        """Returns the email address of the user of the client that sock is connected to"""
+        for email in groups:
+                if sock in groups[email]:
+                        return email
+
+def relay(socks,command,args):
+        return #do not use until i've got the client to listen
+        #might be an idea to sort paths out first as well
+        if command == 4:
+                #a file was added to a folder; now add it to the others
+                for sock in socks:
+                        common.socket = sock
+                        if common.request_send(args[1]):
+                                common.send_file(args[0])
+        elif command == 5:
+                #a file was deleted from a folder; now delete it from the others
+                for sock in socks:
+                        message = makeheader(5,args[0])
+                        sock.send(message)
+        elif command == 6:
+                #a file was moved in a folder; now move it in the others
+                for sock in socks:
+                        message = makeheader(6,args[0],args[1])
+                        sock.send(message)
+        elif command == 7:
+                #a file was renamed in a folder; now rename it in the others
+                for sock in socks:
+                        message = makeheader(7,args[0],args[1])
+                        sock.send(message)
 
 def receive_header(sock):
     header = ""
@@ -74,6 +104,10 @@ def Connection_Handler(sock):
         TYPE, args = receive_header(sock)
         print "got header", TYPE, args
         handlers[TYPE](sock,*args)
+        if TYPE in (4,5,6,7):
+                socks = groups[sock_email(sock)]
+                socks.remove(sock)
+                relay(socks,command,args)        
         print "dealt with it"
 
 handlers = {
@@ -85,6 +119,8 @@ handlers = {
         6:common.move_file,
         7:common.rename_file
         }
+
+groups = {} #groups of sockets that connect to clients using the same account, that need to be synchronized
 
 if __name__ == "__main__":
 	#setup database
@@ -101,6 +137,11 @@ if __name__ == "__main__":
     while True:
         print sock
         clientsock, addr = sock.accept()
+        email = sock_email(clientsock)
+        if email:
+                groups[email].add(clientsock)
+        else:
+                groups[email] = set([clientsock])
         if server_config.sslwrap:
             sock = ssl.wrap_socket(sock, server_side=True, ssl_version=ssl.PROTOCOL_TLSv1)
         Connection_Handler(clientsock)

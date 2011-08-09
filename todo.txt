@@ -8,3 +8,5 @@
 - make mac and linux clients.
 - make GUI.
 - figure out SSL
+- some mechanism for handling logouts and broken connections
+- figure out something solid about how to handle paths
