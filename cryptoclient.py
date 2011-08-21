@@ -1,5 +1,5 @@
 #CryptoBox client
-import socket, ssl, os, hashlib, easyaes, win32file, win32con, thread, traceback, time, common
+import socket, ssl, os, hashlib, easyaes, win32file, win32con, thread, traceback, time, common, client_config, shutil
 from common import makeheader
 
 class _globals():
@@ -9,6 +9,10 @@ class _globals():
 
 def sha(x):
     return hashlib.sha512(x).digest()
+
+def getrel(path):
+    """Returns path relative to g.watchpath (with no leading slash"""
+    return path[len(g.watchpath)+1:]
 
 def getemailandpasshash():
     email = raw_input("Enter email: ")
@@ -22,8 +26,7 @@ def getemailandpasshash():
     return email+passhash
 
 def authenticate():
-    message = makeheader(1)
-    message += getemailandpasshash()
+    message = getemailandpasshash()
     socket.send(message)
 
     reply = socket.recv(1)
@@ -33,25 +36,64 @@ def authenticate():
     else:
         print "Authentication failed"
 
-def new_account():
-    message = makeheader(2)
-    message += getemailandpasshash()
-    socket.send(message)
+def receive_header(sock):
+    header = ""
+    while True:
+        header += sock.recv(1)
+        if g.socklock == 1: #watcher's got the socket
+                g.watchersockbuffer.append(header)
+                header = ""
+                continue
+        if header == "#":
+            thread.interrupt_main()
+            raise
+        if header[-1] == chr(255):
+            #found end of header
+            args = header.split(chr(0))[1:-1]
+            return ord(header[0]), args
 
-    reply = socket.recv(1)
-    if ord(reply) == 1:
-        print "New account created"
-        g.loggedin = True
-    else:
-        print "Fail"
+def listener():
+    """ Listens for updates from the server """
+    try:
+        while True:
+            print
+            print "Listener is listening..."
+            TYPE, args = receive_header(socket)
+            g.socklock = 2 #make sure the watcher doesn't interupt in
+            print "got header", TYPE, args
+            handlers[TYPE](socket,*args)
+            g.socklock = 0 #free up the socket
+            print "g.ignore =", g.ignore
+            print "dealt with it"
+    except:
+        traceback.print_exc()
+        thread.interrupt_main()
+
+#---------------- SEND MOD REQUESTS -----------
+
+def send_file(path):
+    cipher = []
+    print "Encrypting..."
+    easyaes.encrypt(g.watchpath+"\\"+path,cipher,g.password) #easyaes needs your password to make an IV)
+    print "Done"
+    cipher = "".join(cipher)
+    
+    exactlength = len(cipher)+common.ceil(len(cipher),256)*64
+    #       length of file     +   number of hashes   *  64 bytes per hash
+    # SEND HEAD
+    message = makeheader(4,path,exactlength)
+    socket.send(message)
+    # SEND BODY
+    r = common.upload(cipher)
+    print "File sent,", r, "blocks resent"
+
+def remote_create(path):
+    if common.request_send(g.watchpath+"\\"+path):
+        send_file(path)
 
 def remote_delete(path):
     message = makeheader(5,path)
     socket.send(message)
-
-def remote_create(path):
-    if common.request_send(path):
-        common.send_file(path)
 
 def remote_move(pathold,pathnew):
     message = makeheader(6,pathold,pathnew)
@@ -59,21 +101,27 @@ def remote_move(pathold,pathnew):
 
 def remote_rename(pathold,pathnew):
     message = makeheader(7,pathold,pathnew)
-    socket.send(message)
+    socket.send(message) 
+
+#---------------- /SEND MOD REQUESTS ----------
 
 def timer():
     time.sleep(1)
     try:
         g.queue.append(g.events)
         g.events = []
-        if not g.processing:
-            g.processing = True
-            handleDirEvent()
-            g.processing = False
+        while g.socklock == 2:
+            time.sleep(0.5) #wait till the listener finishes with the socket
+        if g.socklock == 0: #don't start processing them if another thread already has (in which case g.socklock == 1)
+            g.socklock = 1
+            handleDirEvents()
+            g.socklock = 0
     except:
         traceback.print_exc()
+        thread.interrupt_main()
     
-def handleDirEvent():
+def handleDirEvents():
+    """Chew through events on the queue till there's none left"""
     events = g.queue.pop(0)
     print events
     summary = "".join([event[0] for event in events])
@@ -108,16 +156,23 @@ def handleDirEvent():
         a = events.pop(0)
         if two:
             b = event = events.pop(0)
-            f(a[1],b[1])
+            if not (a,b) in g.ignore:
+                f(getrel(a[1]),getrel(b[1]))
+            else:
+                g.ignore.remove((a,b))
         else:
-            f(a[1])
+            if not a in g.ignore:
+                f(getrel(a[1])) #chop off the start so it just sends the path relative to watchpath (with no leading slash)
+            else:
+                g.ignore.remove(a)
     if g.queue:
         #the user's changed something in the directory while the last change
         #was being processed
-        handleDirEvent()
+        handleDirEvents()
                     
 
-def dirwatch():
+def watcher():
+    print "watcher invoked"
     #Thanks to Tim Golden for most of this code: http://timgolden.me.uk/python/win32_how_do_i/watch_directory_for_changes.html
     ACTIONS = {
     1 : "C",  #CREATED
@@ -129,7 +184,7 @@ def dirwatch():
     
     FILE_LIST_DIRECTORY = 0x0001
 
-    path_to_watch = "."
+    path_to_watch = g.watchpath
     hDir = win32file.CreateFile (
     path_to_watch,
     FILE_LIST_DIRECTORY,
@@ -158,8 +213,8 @@ def dirwatch():
         None,
         None
         )
-        results = [(ACTIONS[action],os.path.join(g.rootdir,str(path))) for action, path in results]
-        #                                                   ^ (paths are in unicode by default)
+        results = [(ACTIONS[action],os.path.join(g.watchpath,str(path))) for action, path in results]
+        #                                                     ^ (paths are in unicode by default)
         print "tick"
         if results:
             if results[0][0] == "F": #renamed file
@@ -169,28 +224,81 @@ def dirwatch():
         g.events.extend(results)
 
 def crash():
-	socket.send("#")
+    socket.send("#")
+
+#------- HANDLE MOD REQUESTS ------------------
+
+def handle_send_request(sock,filesize):
+    filesize = int(filesize)
+    sock.send(chr(1)) #for now we'll just say yes
+
+def receive_file(sock,path,exactsize):
+    #make sure the watcher doesn't spot this change and report it to the server
+    path = os.path.join(g.watchpath,path)
+    g.ignore.append(("C",path)) #this must be done by predicting exactly what event will be generated when the modification is made and warning handleDirEvents to ignore it
+    filebinary = common.download(sock,exactsize)
+    fout = open(path,"wb")
+    fout.write(filebinary)
+    fout.close()
+
+def delete_file(sock,path):
+    path = os.path.join(g.watchpath,path)
+    g.ignore.append(("D",path))
+    if os.path.isdir(path):
+        shutil.rmtree(path)
+    else:
+        os.remove(path)
+    print "Received request to delete file", path
+
+def move_file(sock,pathold,pathnew):
+    #move the file
+    pathold = os.path.join(g.watchpath,pathold)
+    pathnew = os.path.join(g.watchpath,pathnew)
+    shutil.move(pathold,os.path.split(pathnew)[0])
+
+def rename_file(sock,pathold,pathnew):
+    #rename the file
+    pathold = os.path.join(g.watchpath,pathold)
+    pathnew = os.path.join(g.watchpath,pathnew)
+    os.rename(pathold,pathnew)
+
+#------- /HANDLE MOD REQUESTS ------------------
+
+handlers = {
+        1:None,
+        2:None,
+        3:handle_send_request,
+        4:receive_file,
+        5:delete_file,
+        6:move_file,
+        7:rename_file
+        }
 
 if __name__ == "__main__":
-	#message header 1st bytes:
-	#1 - authentication request
-	#2 - new account request (Remove?)
-	#3 - send request (followed by approximate file size)
-	#4 - incoming file (next four bytes store number of 16-byte blocks in file as an integer)
-	#5 - delete file
-	g = _globals()
-	g.loggedin = False
-	g.events = []
-	g.resettimer = False
-	g.rootdir = "C:\Users\Philip\python\cryptobox"
-	g.queue = []
-	g.processing = False
+    #message header 1st bytes:
+    #1 - authentication request
+    #2 - new account request (Deprecated. The number 2 will be reassigned later)
+    #3 - send request (followed by approximate file size)
+    #4 - incoming file (next four bytes store number of 16-byte blocks in file as an integer)
+    #5 - delete file
+    g = _globals()
+    g.loggedin = False
+    g.events = []
+    g.resettimer = False
+    g.watchpath = client_config.watchpath
+    g.queue = []
+    g.socklock = 0 #0 = no lock, 1 = locked to watcher, 2 = locked to listener
+    g.watchersockbuffer = []
+    g.ignore = []
 
-	socket = socket.socket()
-	print "Connecting..."
-	socket.connect(('localhost',7274))
-	print "Connected"
-	common.socket = socket #give common functions access to the socket
+    socket = socket.socket()
+    print "Connecting..."
+    socket.connect(('localhost',7274))
+    print "Connected"
 
-	authenticate()
-	dirwatch()
+    common.socket = common.WatcherSock(socket) #all common functions used by watcher use the global variable socket; all used by listener will take the normal socket as an argument
+
+    authenticate()
+    if raw_input("Watch folder 2? "): g.watchpath = r"C:\Users\Philip\Desktop\cryptobox2"
+    thread.start_new_thread(listener,())
+    watcher()

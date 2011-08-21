@@ -1,6 +1,4 @@
-- make the client listen to the server.
 - make sure the client can receive files from the server and decrypt them properly.
-- think of and implement a system for handling IVs (the current one is fundamentally shit).
 - implement threads properly on the server.
 - make website.
 - implement file moving and renaming on the server.

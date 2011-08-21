@@ -1,10 +1,25 @@
 #transfer.py
 #a module providing file transfer routines for both client and server
-import easyaes, time, hashlib, os
+import easyaes, time, hashlib, os, thread
 from math import ceil as __ceil__
 
 class _globals():
         pass
+
+class WatcherSock():
+    """A wrapper class for socket that receives from watchersockbuffer instead of the actual socket"""
+    def __init__(self,sock):
+        self.sock = sock
+        
+    def recv(self,n):
+        message = ""
+        while len(message) < n:
+            if g.watchersockbuffer:
+                message += g.watchersockbuffer.pop(0)
+        return message
+
+    def send(self,message):
+        self.sock.send(message)
 
 def sha(x):
         return hashlib.sha512(x).digest()
@@ -29,13 +44,13 @@ def makeheader(first,*args):
     header += chr(255) #i'd really prefer to use something like : and | as delimiters, but since there doesn't seem to be a single character that doesn't appear in file paths on any system, I'm using non-printable characters
     return header
 
-def request_send(path,exactsize=None):
+def request_send(path=None,exactsize=None):
     if not exactsize:
-            length = ceil(os.stat(path).st_size,16)*16 + 256 #now length is a generous estimate of ciphertext filesize
-            message = makeheader(3,length)
-            socket.send(message) #send request has no body
+        length = ceil(os.stat(path).st_size,16)*16 + 256 #now length is a generous estimate of ciphertext filesize
+        message = makeheader(3,length)
+        socket.send(message) #send request has no body
     else:
-            socket.send(makeheader(3,exactsize))
+        socket.send(makeheader(3,exactsize))
     reply = socket.recv(1)
     if ord(reply) != 1:
         print "Upload request denied. Sorry."
@@ -43,47 +58,10 @@ def request_send(path,exactsize=None):
     return True
 
 def handle_send_request(sock,filesize):
-        #make sure there's enough room on the server
-        #xray, you handle this, i don't have a clue
-        filesize = int(filesize)
-        sock.send(chr(1)) #for now we'll just say yes
-
-def send_file(path):
-    cipher = []
-    print "Encrypting..."
-    easyaes.encrypt(path,cipher,g.password) #easyaes needs your password to make an IV)
-    print "Done"
-    cipher = "".join(cipher)
-    
-    exactlength = len(cipher)+ceil(len(cipher),256)*64
-    print len(cipher), ceil(len(cipher),256)*64
-    #       length of file    + number of hashes   *  64 bytes per hash
-    # SEND HEAD
-    message = makeheader(4,path,exactlength)
-    socket.send(message)
-    # SEND BODY
-    r = upload(cipher)
-    print "File sent,", r, "blocks resent"
-
-def receive_file(sock,path,exactsize):
-    filebinary = download(sock,exactsize)
-    #now do something with it. like put it in /home/useraccountid/path
-
-def delete_file(sock,path):
-        #delete it
-        #let's not bother with an acknowledgement, I think we can assume this will be successful
-        print "Received request to delete file", path
-        pass
-
-def move_file(sock,pathold,pathnew):
-        #move the file
-        print "Received request to move file"
-        pass
-
-def rename_file(sock,pathold,pathnew):
-        #rename the file
-        print "Received request to rename file"
-        pass
+    #make sure there's enough room on the server
+    #xray, you handle this, i don't have a clue
+    filesize = int(filesize)
+    sock.send(chr(1)) #for now we'll just say yes
 
 def upload(data):
     """ Sends a large string data to the server, using sha to ensure integrity """ 
@@ -117,7 +95,7 @@ def upload(data):
 
 def download(sock,exactsize):
     """ Receives a file, checking a hash after every 256 bytes """
-    print "download running from transfer namespace"
+    print "download running from common's namespace"
     exactsize = int(exactsize)
     bytesreceived = 0
     resend = []
@@ -153,3 +131,4 @@ def download(sock,exactsize):
     return bytestream
 
 g = _globals()
+g.watchersockbuffer = []

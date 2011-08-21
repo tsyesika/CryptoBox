@@ -35,27 +35,24 @@ def encrypt(plaintext,out,password):
     length = plaintext.tell() #get file length, so the decrypter knows how many bytes padding to ignore
     plaintext.seek(0) #put the cursor back to the start of the file
 
+    #CREATE AN IV AND STORE ITS KEY FOR GENERATION WHEN IT'S DECRYPTION TIME
+    ivkey = os.urandom(16)
+    iv = bytearray(sha(ivkey+password)[:16])
+    aes_cbc_256.set_iv(iv)
+
     outtolist = False
     if isinstance(out,list):
+        out.append(ivkey)
         out.append(struct.pack("L",length))
         outtolist = True
     elif isinstance(out,str) or isinstance(out,file):
         out = getfileobject(out,True)
+        out.write(ivkey)
         out.write(struct.pack("L",length))
     else:
         #out is not a list, file or path
         raise TypeError("out must be a list, file or path string")    
 
-    #CREATE AN IV AND STORE ITS KEY FOR GENERATION WHEN IT'S DECRYPTION TIME
-    ivkey = os.urandom(16)
-    iv = sha(ivkey+password)
-    h = sha(plaintext.read())
-    plaintext.seek(0)
-    fout = open(r"C:\Users\Philip\python\iv_table.txt","a")
-    fout.write(h+":"+ivkey+"\n") #store the ivkey for decrypting the file later
-    fout.close()
-    
-    aes_cbc_256.set_iv(iv)
     while True:
         plainblock = bytearray(plaintext.read(16)) #16-byte blocks
         if len(plainblock) == 0:
@@ -70,18 +67,22 @@ def encrypt(plaintext,out,password):
     if not outtolist:
         out.close()
 
-def decrypt(ciphertext,out,iv):
+def decrypt(ciphertext,out,password):
     #takes a file, path string or list ciphertext
     #creates a plaintext file out, which must be a file object or path string
     readfromfile = False
     if type(ciphertext) in (file,str):
         readfromfile = True
         ciphertext = getfileobject(ciphertext,False)
+        ivkey = ciphertext.read(16)
+        iv = sha(ivkey+password)[:16]
         length = ciphertext.read(struct.calcsize("L"))
         length = struct.unpack("L",length)[0]
     elif type(ciphertext) == list:
-        length = struct.unpack("L",ciphertext[0])[0]
-        del ciphertext[0]
+        ivkey = ciphertext[0] #don't worry, this never happens
+        iv = sha(ivkey+password)[:16]
+        length = struct.unpack("L",ciphertext[1])[0]
+        del ciphertext[:2]
     else:
         #ciphertext is not a list, file or path
         raise TypeError("ciphertext must be a list, file or path string")
