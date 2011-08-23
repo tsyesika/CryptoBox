@@ -46,6 +46,7 @@ def makeheader(first,*args):
 
 def request_send(path=None,exactsize=None):
     if not exactsize:
+        print path
         length = ceil(os.stat(path).st_size,16)*16 + 256 #now length is a generous estimate of ciphertext filesize
         message = makeheader(3,length)
         socket.send(message) #send request has no body
@@ -56,12 +57,6 @@ def request_send(path=None,exactsize=None):
         print "Upload request denied. Sorry."
         return False
     return True
-
-def handle_send_request(sock,filesize):
-    #make sure there's enough room on the server
-    #xray, you handle this, i don't have a clue
-    filesize = int(filesize)
-    sock.send(chr(1)) #for now we'll just say yes
 
 def upload(data):
     """ Sends a large string data to the server, using sha to ensure integrity """ 

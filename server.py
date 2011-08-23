@@ -115,9 +115,13 @@ def watcher(sock):
 #---------------- SEND MOD REQUESTS -----------
 
 def relay(sock,command,args):
+    if command == 2:
+        #a folder was made
+        message = makeheader(2,args[0])
+        sock.send(message)
     if command == 4:
         #a file was added to a folder; now add it to yours
-        common.socket = common.WatcherSock(sock)
+        common.socket = common.WatcherSock(sock) #two-way communication is required here
         if common.request_send(exactsize=int(args[1])+256):
             send_file(sock,args[0])
     elif command == 5:
@@ -151,6 +155,17 @@ def send_file(sock,path):
 
 #------- HANDLE MOD REQUESTS ------------------
 
+def make_folder(sock,path):
+    print "Received request to make folder", path
+    path = os.path.join(repopath(sock),path)
+    os.mkdir(path)
+
+def handle_send_request(sock,filesize):
+    #make sure there's enough room on the server
+    print "Received space check request for", filesize, "bytes"
+    filesize = int(filesize)
+    sock.send(chr(1)) #for now we'll just say yes
+
 def receive_file(sock,path,exactsize):
     filebinary = common.download(sock,exactsize)
     fout = open(repopath(sock)+"\\"+path,"wb")
@@ -169,20 +184,17 @@ def delete_file(sock,path):
 
 def move_file(sock,pathold,pathnew):
     #move the file
+    print "Received request to move file"
     pathold = os.path.join(repopath(sock),pathold)
     pathnew = os.path.join(repopath(sock),pathnew)
     shutil.move(pathold,os.path.split(pathnew)[0])
 
 def rename_file(sock,pathold,pathnew):
     #rename the file
-    global log
+    print "Received request to rename file"
     pathold = os.path.join(repopath(sock),pathold)
     pathnew = os.path.join(repopath(sock),pathnew)
-    log = (pathold, pathnew)
-    if not os.path.exists(pathold):
-        raise
-    else:
-        os.rename(pathold,pathnew)
+    os.rename(pathold,pathnew)
 
 #------- /HANDLE MOD REQUESTS ------------------
 
@@ -201,7 +213,7 @@ def listener(sock):
         socklock[sock] = 2 #make sure the watcher doesn't interupt in
         print "got header", TYPE, args, "from", sock
         handlers[TYPE](sock,*args)
-        if TYPE in (4,5,6,7):
+        if TYPE in (2,4,5,6,7):
             socks = set(groups[sock_email(sock)])
             print socks
             socks.remove(sock)
@@ -215,8 +227,8 @@ def listener(sock):
 handlers = {
         0:None, #special type; tells the listener do nothing and wait until the watcher frees up the socket before calling recv again
         1:authenticate, #no longer used as a request response
-        2:None, #ignore this
-        3:common.handle_send_request,
+        2:make_folder,
+        3:handle_send_request,
         4:receive_file,
         5:delete_file,
         6:move_file,

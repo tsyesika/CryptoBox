@@ -14,6 +14,19 @@ def getrel(path):
     """Returns path relative to g.watchpath (with no leading slash"""
     return path[len(g.watchpath)+1:]
 
+def getabs(path):
+    return g.watchpath + "\\" + path
+
+def listdir_recursive(path):
+    paths = [path]
+    for entry in os.listdir(path):
+        full = os.path.join(path,entry)
+        if os.path.isdir(entry):
+            paths.extend(listdir_recursive(full))
+        else:
+            paths.append(full)
+    return paths
+
 def getemailandpasshash():
     email = raw_input("Enter email: ")
     password = raw_input("Enter password: ")
@@ -74,25 +87,30 @@ def listener():
 def send_file(path):
     cipher = []
     print "Encrypting..."
-    easyaes.encrypt(g.watchpath+"\\"+path,cipher,g.password) #easyaes needs your password to make an IV)
+    easyaes.encrypt(path,cipher,g.password) #easyaes needs your password to make an IV)
     print "Done"
     cipher = "".join(cipher)
     
     exactlength = len(cipher)+common.ceil(len(cipher),256)*64
     #       length of file     +   number of hashes   *  64 bytes per hash
     # SEND HEAD
-    message = makeheader(4,path,exactlength)
+    message = makeheader(4,getrel(path),exactlength)
     socket.send(message)
     # SEND BODY
     r = common.upload(cipher)
     print "File sent,", r, "blocks resent"
 
 def remote_create(path):
-    if common.request_send(g.watchpath+"\\"+path):
-        send_file(path)
+    if os.path.isfile(path):
+        if common.request_send(path):
+            send_file(path)
+    else:
+        #user made a folder
+        message = makeheader(2,getrel(path))
+        socket.send(message)
 
 def remote_delete(path):
-    message = makeheader(5,path)
+    message = makeheader(5,getrel(path))
     socket.send(message)
 
 def remote_move(pathold,pathnew):
@@ -139,8 +157,8 @@ def handleDirEvents():
         f, two = remote_create, False
     elif summary[0] == "U":
         #a file was modified
-        remote_create(events[0][1])
-        return
+        f, two = remote_create, False
+        del events[1] #windows API returns two events per modification, so remove the second (assuming only one file can be modified at once)
     elif summary == "DC"*(n/2):
         #one or more files were moved
         f, two = remote_move, True
@@ -160,11 +178,13 @@ def handleDirEvents():
                 f(getrel(a[1]),getrel(b[1]))
             else:
                 g.ignore.remove((a,b))
+                print "Ignored event pair", (a,b)
         else:
             if not a in g.ignore:
-                f(getrel(a[1])) #chop off the start so it just sends the path relative to watchpath (with no leading slash)
+                f(a[1]) #chop off the start so it just sends the path relative to watchpath (with no leading slash)
             else:
                 g.ignore.remove(a)
+                print "Ignored event", a
     if g.queue:
         #the user's changed something in the directory while the last change
         #was being processed
@@ -225,34 +245,52 @@ def crash():
 
 #------- HANDLE MOD REQUESTS ------------------
 
+def make_folder(sock,path):
+    print "Received request to make folder", path
+    path = getabs(path)
+    g.ignore.append(("C",path))
+    os.mkdir(path)
+
 def handle_send_request(sock,filesize):
+    print "Received space check request for", filesize, "bytes"
     filesize = int(filesize)
     sock.send(chr(1)) #for now we'll just say yes
 
 def receive_file(sock,path,exactsize):
     #make sure the watcher doesn't spot this change and report it to the server
+    #this must be done by predicting exactly what event will be generated when the modification is made and warning handleDirEvents to ignore it
     path = os.path.join(g.watchpath,path)
-    g.ignore.append(("C",path)) #this must be done by predicting exactly what event will be generated when the modification is made and warning handleDirEvents to ignore it
+    if os.path.exists(path):
+        g.ignore.append(("U",path)) #a file's actually being modified, not created
+    else:
+        g.ignore.append(("C",path))
     filebinary = common.download(sock,exactsize)
     filebinary = easyaes.decrypt(filebinary,path,g.password)
 
 def delete_file(sock,path):
+    print "Received request to delete file", path
     path = os.path.join(g.watchpath,path)
-    g.ignore.append(("D",path))
     if os.path.isdir(path):
+        g.ignore.extend(
+            [("D",killpath) for killpath in listdir_recursive(path)]
+            )
         shutil.rmtree(path)
     else:
+        g.ignore.append(("D",path))
         os.remove(path)
-    print "Received request to delete file", path
+    
 
 def move_file(sock,pathold,pathnew):
     #move the file
+    print "Received request to move file"
     pathold = os.path.join(g.watchpath,pathold)
     pathnew = os.path.join(g.watchpath,pathnew)
+    g.ignore.append( (("D",pathold),("C",pathnew)) )
     shutil.move(pathold,os.path.split(pathnew)[0])
 
 def rename_file(sock,pathold,pathnew):
     #rename the file
+    print "Received request to rename file"
     pathold = os.path.join(g.watchpath,pathold)
     pathnew = os.path.join(g.watchpath,pathnew)
     g.ignore.append( (("F",pathold),("T",pathnew)) )
@@ -262,7 +300,7 @@ def rename_file(sock,pathold,pathnew):
 
 handlers = {
         1:None,
-        2:None,
+        2:make_folder,
         3:handle_send_request,
         4:receive_file,
         5:delete_file,
