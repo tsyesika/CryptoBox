@@ -71,16 +71,17 @@ def decrypt(ciphertext,out,password):
     #takes a file, path string or list ciphertext
     #creates a plaintext file out, which must be a file object or path string
     readfromfile = False
-    if type(ciphertext) in (file,str):
+    if isinstance(ciphertext,file) or (isinstance(ciphertext,str) and ciphertext[0] == "C"):
         readfromfile = True
         ciphertext = getfileobject(ciphertext,False)
         ivkey = ciphertext.read(16)
-        iv = sha(ivkey+password)[:16]
-        length = ciphertext.read(struct.calcsize("L"))
+        length = ciphertext.read(struct.calcsize("L"))[0]
         length = struct.unpack("L",length)[0]
+    elif type(ciphertext) == str:
+        ivkey = ciphertext[:16]
+        length = struct.unpack("L",ciphertext[16:16+struct.calcsize("L")])[0]
     elif type(ciphertext) == list:
         ivkey = ciphertext[0] #don't worry, this never happens
-        iv = sha(ivkey+password)[:16]
         length = struct.unpack("L",ciphertext[1])[0]
         del ciphertext[:2]
     else:
@@ -90,13 +91,16 @@ def decrypt(ciphertext,out,password):
     
     blocks = 0
     plainblock = ""
+    iv = bytearray(sha(ivkey+password)[:16])
     aes_cbc_256.set_iv(iv)
     while True:
         if readfromfile:
             cipherblock = list(bytearray(ciphertext.read(16))) #16-byte (128 bit) blocks
         else:
-            if ciphertext:
-                cipherblock = [ord(char) for char in ciphertext.pop(0)]
+            #reading from a string (never mind lists of blocks, that never happens)
+            start = 20+blocks*16
+            if start < len(ciphertext):
+                cipherblock = list(bytearray(ciphertext[start:start+16]))
             else:
                 cipherblock = []
         if len(cipherblock) == 0:

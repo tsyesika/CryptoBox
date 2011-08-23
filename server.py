@@ -175,9 +175,14 @@ def move_file(sock,pathold,pathnew):
 
 def rename_file(sock,pathold,pathnew):
     #rename the file
+    global log
     pathold = os.path.join(repopath(sock),pathold)
     pathnew = os.path.join(repopath(sock),pathnew)
-    os.rename(pathold,pathnew)
+    log = (pathold, pathnew)
+    if not os.path.exists(pathold):
+        raise
+    else:
+        os.rename(pathold,pathnew)
 
 #------- /HANDLE MOD REQUESTS ------------------
 
@@ -222,6 +227,7 @@ groups = {} #groups of sockets that connect to clients using the same account, t
 relaybuffer = {}
 socklock = {}
 die = False
+log = ""
 
 clients = 0
 if __name__ == "__main__":

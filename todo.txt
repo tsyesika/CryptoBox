@@ -8,3 +8,6 @@
 - figure out SSL
 - some mechanism for handling logouts and broken connections
 - figure out something solid about how to handle paths
+- easyaes still slightly assumes a long to be 4 bytes. Could possibly be bad.
+- optimise easyaes a bit
+- make syncing more robust (e.g. deal with trying to delete a file that's no longer there)

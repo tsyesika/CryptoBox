@@ -216,9 +216,6 @@ def watcher():
         results = [(ACTIONS[action],os.path.join(g.watchpath,str(path))) for action, path in results]
         #                                                     ^ (paths are in unicode by default)
         print "tick"
-        if results:
-            if results[0][0] == "F": #renamed file
-                crash()
         if not g.events:
             thread.start_new_thread(timer,())
         g.events.extend(results)
@@ -237,9 +234,7 @@ def receive_file(sock,path,exactsize):
     path = os.path.join(g.watchpath,path)
     g.ignore.append(("C",path)) #this must be done by predicting exactly what event will be generated when the modification is made and warning handleDirEvents to ignore it
     filebinary = common.download(sock,exactsize)
-    fout = open(path,"wb")
-    fout.write(filebinary)
-    fout.close()
+    filebinary = easyaes.decrypt(filebinary,path,g.password)
 
 def delete_file(sock,path):
     path = os.path.join(g.watchpath,path)
@@ -260,6 +255,7 @@ def rename_file(sock,pathold,pathnew):
     #rename the file
     pathold = os.path.join(g.watchpath,pathold)
     pathnew = os.path.join(g.watchpath,pathnew)
+    g.ignore.append( (("F",pathold),("T",pathnew)) )
     os.rename(pathold,pathnew)
 
 #------- /HANDLE MOD REQUESTS ------------------
