@@ -1,13 +1,11 @@
-- make sure the client can receive files from the server and decrypt them properly.
+- integrate xray's database code into the server
 - implement threads properly on the server.
 - make website.
-- implement file moving and renaming on the server.
-- actually there technically isn't anything file-related on the server yet, so that all needs doing.
 - make mac and linux clients.
 - make GUI.
 - figure out SSL
 - some mechanism for handling logouts and broken connections
-- figure out something solid about how to handle paths
 - easyaes still slightly assumes a long to be 4 bytes. Could possibly be bad.
 - optimise easyaes a bit
 - make syncing more robust (e.g. deal with trying to delete a file that's no longer there)
+- an array type might be a faster alternative to lists for those socket buffers. Investigate.

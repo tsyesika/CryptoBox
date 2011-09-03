@@ -1,17 +1,48 @@
 #CryptoBox client
-import socket, ssl, os, hashlib, easyaes, win32file, win32con, thread, traceback, time, common, client_config, shutil
-from common import makeheader
+import socket, ssl, os, hashlib, easyaes, win32file, win32con, thread, traceback, time, common, client_config, shutil, struct
+from common import makeheader, ceil
 
 class _globals():
     def __setattr__(self,name,value):
         self.__dict__[name] = value
         common.g.__dict__[name] = value #functions both in cryptoclient's namespace and in common's need access to g, so it's important to synchronize them
 
+class Halfsock():
+    """A wrapper class for socket that receives from a buffer list instead of the directly from socket.
+    Also will not send until the socket is free, ensuring threads don't send at the same time."""
+    def __init__(self,sock,_thread):
+        self.sock = sock
+        self._thread = _thread #1 = watcher, 2 = listener
+        
+    def recv(self,n):
+        message = ""
+        if self._thread == 1:
+            Buffer = g.watchersockbuffer
+        else:
+            Buffer = g.listenersockbuffer
+        while len(message) < n:
+            if Buffer:
+                message += "".join(Buffer[:n])
+                del Buffer[:n]
+            else:
+                time.sleep(0.1) #don't devour the CPU
+        return message
+
+    def send(self,message,recipient='l'):
+        if type(recipient) == int:
+            recipient = ('w','l')[recipient]
+        while g.socklock:
+            time.sleep(0.1)
+        g.socklock = self._thread
+        self.sock.send(recipient+struct.pack("H",len(message)))
+        self.sock.send(message)
+        g.socklock = 0
+
 def sha(x):
     return hashlib.sha512(x).digest()
 
 def getrel(path):
-    """Returns path relative to g.watchpath (with no leading slash"""
+    """Returns path relative to g.watchpath (with no leading slash)"""
     return path[len(g.watchpath)+1:]
 
 def getabs(path):
@@ -53,10 +84,6 @@ def receive_header(sock):
     header = ""
     while True:
         header += sock.recv(1)
-        if g.socklock == 1: #watcher's got the socket
-                g.watchersockbuffer.append(header)
-                header = ""
-                continue
         if header == "#":
             thread.interrupt_main()
             raise
@@ -65,81 +92,148 @@ def receive_header(sock):
             args = header.split(chr(0))[1:-1]
             return ord(header[0]), args
 
-def listener():
+def listener(sock):
     """ Listens for updates from the server """
     try:
         while True:
             print
-            print "Listener is listening..."
-            TYPE, args = receive_header(socket)
-            g.socklock = 2 #make sure the watcher doesn't interupt in
-            print "got header", TYPE, args
-            handlers[TYPE](socket,*args)
-            g.socklock = 0 #free up the socket
-            print "g.ignore =", g.ignore
-            print "dealt with it"
+            #print "Listener is listening..."
+            TYPE, args = receive_header(sock)
+            #print "got header", TYPE, args
+            handlers[TYPE](sock,*args)
+            #print "dealt with it"
+    except:
+        traceback.print_exc()
+        thread.interrupt_main()
+
+def receiver(sock):
+    """ Receives stuff from the client, forwards it to either the watcher or the listener """
+    try:
+        while True:
+            message = []
+            byte = sock.recv(1)
+            if byte in ('L','W'): #header
+                while byte != chr(255):
+                    byte = sock.recv(1)
+                    message.append(byte)
+            else: #raw data
+                n = struct.unpack("H",sock.recv(2))[0]
+                while len(message) < n:
+                    message.extend(list(sock.recv(n-len(message))))
+                
+            if byte in ('W','w'): #for watcher
+                g.watchersockbuffer.extend(message)
+            else: #for listener
+                g.listenersockbuffer.extend(message)
     except:
         traceback.print_exc()
         thread.interrupt_main()
 
 #---------------- SEND MOD REQUESTS -----------
 
-def send_file(path):
+def request_send(sock,path=None,exactsize=None):
+    if not exactsize:
+        print path
+        length = ceil(os.stat(path).st_size,16)*16 + 256 #now length is a generous estimate of ciphertext filesize
+        message = makeheader(3,length)
+        sock.send(message) #send request has no body
+    else:
+        sock.send(makeheader(3,exactsize))
+    reply = sock.recv(1)
+    if ord(reply) != 1:
+        print "Upload request denied. Sorry."
+        return False
+    return True
+
+def send_file(sock,path):
     cipher = []
     print "Encrypting..."
     easyaes.encrypt(path,cipher,g.password) #easyaes needs your password to make an IV)
     print "Done"
     cipher = "".join(cipher)
     
-    exactlength = len(cipher)+common.ceil(len(cipher),256)*64
+    exactlength = len(cipher)+ceil(len(cipher),256)*64
     #       length of file     +   number of hashes   *  64 bytes per hash
     # SEND HEAD
     message = makeheader(4,getrel(path),exactlength)
-    socket.send(message)
+    sock.send(message)
     # SEND BODY
-    r = common.upload(cipher)
+    r = upload(sock,cipher)
     print "File sent,", r, "blocks resent"
 
-def remote_create(path):
+def upload(socket,data):
+    """ Sends a large string data to the server, using sha to ensure integrity """ 
+    cursor = 0
+    while cursor < len(data):
+        if len(data) - cursor >= 256:
+            block = data[cursor:cursor+256]
+        else:
+            block = data[cursor:]
+        socket.send(block)
+        socket.send(sha(block))
+        cursor += 256
+
+    #wait for acknowledgement from server
+    resend = ""
+    while True:
+        resend += socket.recv(1)
+        if resend[-1] == chr(255):
+            print resend
+            resend = [int(i) for i in resend.split(chr(0))[:-1]]
+            break
+    print "resend =", resend
+    for i in resend:
+        #resend corrupted blocks
+        print "resending block", i
+        socket.send(
+            makeheader(4, min(256,len(data)-i))
+            )
+        upload(data[ i : min(i+256,len(data)) ])
+    return len(resend)
+
+def remote_create(sock,path):
     if os.path.isfile(path):
-        if common.request_send(path):
-            send_file(path)
+        if request_send(sock,path):
+            send_file(sock,path)
     else:
         #user made a folder
         message = makeheader(2,getrel(path))
-        socket.send(message)
+        sock.send(message)
 
-def remote_delete(path):
+def remote_delete(sock,path):
     message = makeheader(5,getrel(path))
-    socket.send(message)
+    sock.send(message)
 
-def remote_move(pathold,pathnew):
+def remote_move(sock,pathold,pathnew):
     message = makeheader(6,pathold,pathnew)
-    socket.send(message)
+    sock.send(message)
 
-def remote_rename(pathold,pathnew):
+def remote_rename(sock,pathold,pathnew):
     message = makeheader(7,pathold,pathnew)
-    socket.send(message) 
+    sock.send(message) 
 
 #---------------- /SEND MOD REQUESTS ----------
 
 def timer():
+    oldlength = len(g.events)
     time.sleep(1)
     try:
+        while len(g.events) > oldlength:
+            oldlength = len(g.events)
+            time.sleep(0.2) #this (hopefully) prevents a bug whereby an event that occurs exactly a seconds after another one can be chopped in half, creating two events, one of which normally confuses handleDirEvents
+        if type(g.events) == tuple:
+            print g.events
         g.queue.append(g.events)
         g.events = []
-        while g.socklock == 2:
-            time.sleep(0.5) #wait till the listener finishes with the socket
-        if g.socklock == 0: #don't start processing them if another thread already has (in which case g.socklock == 1)
-            g.socklock = 1
-            handleDirEvents()
-            g.socklock = 0
+        g.timeline.append((time.clock(),"Collected"))
+        handleDirEvents()
     except:
         traceback.print_exc()
         thread.interrupt_main()
     
 def handleDirEvents():
     """Chew through events on the queue till there's none left"""
+    print "HANDLE_DIR_EVENTS"
     events = g.queue.pop(0)
     print events
     summary = "".join([event[0] for event in events])
@@ -155,10 +249,14 @@ def handleDirEvents():
     elif summary == "C"*n:
         #one or more files were created
         f, two = remote_create, False
-    elif summary[0] == "U":
+    elif summary == "U":
+        #derp (always ignore these)
+        print "HHHNNNNNNNGGGGGG"
+        return
+    elif summary == "UU":
         #a file was modified
         f, two = remote_create, False
-        del events[1] #windows API returns two events per modification, so remove the second (assuming only one file can be modified at once)
+        events = events[:1] #windows API returns two events per modification, so remove the second (I'm assuming only one file can be modified at once)
     elif summary == "DC"*(n/2):
         #one or more files were moved
         f, two = remote_move, True
@@ -173,72 +271,78 @@ def handleDirEvents():
     while events:
         a = events.pop(0)
         if two:
-            b = event = events.pop(0)
+            b = events.pop(0)
             if not (a,b) in g.ignore:
-                f(getrel(a[1]),getrel(b[1]))
+                f(Halfsock(socket,1),getrel(a[1]),getrel(b[1]))
             else:
                 g.ignore.remove((a,b))
                 print "Ignored event pair", (a,b)
         else:
             if not a in g.ignore:
-                f(a[1]) #chop off the start so it just sends the path relative to watchpath (with no leading slash)
+                f(Halfsock(socket,1),a[1])
             else:
                 g.ignore.remove(a)
                 print "Ignored event", a
     if g.queue:
         #the user's changed something in the directory while the last change
         #was being processed
+        print g.queue
         handleDirEvents()
                     
 
 def watcher():
-    print "watcher invoked"
-    #Thanks to Tim Golden for most of this code: http://timgolden.me.uk/python/win32_how_do_i/watch_directory_for_changes.html
-    ACTIONS = {
-    1 : "C",  #CREATED
-    2 : "D",  #DELETED
-    3 : "U",  #UPDATED
-    4 : "F",  #RENAMED FROM
-    5 : "T"   #RENAMED TO
-    }
-    
-    FILE_LIST_DIRECTORY = 0x0001
+    try:
+        print "watcher invoked"
+        #Thanks to Tim Golden for most of this code: http://timgolden.me.uk/python/win32_how_do_i/watch_directory_for_changes.html
+        ACTIONS = {
+        1 : "C",  #CREATED
+        2 : "D",  #DELETED
+        3 : "U",  #UPDATED
+        4 : "F",  #RENAMED FROM
+        5 : "T"   #RENAMED TO
+        }
+        
+        FILE_LIST_DIRECTORY = 0x0001
 
-    path_to_watch = g.watchpath
-    hDir = win32file.CreateFile (
-    path_to_watch,
-    FILE_LIST_DIRECTORY,
-    win32con.FILE_SHARE_READ | win32con.FILE_SHARE_WRITE,
-    None,
-    win32con.OPEN_EXISTING,
-    win32con.FILE_FLAG_BACKUP_SEMANTICS,
-    None
-    )
-    while True:
-        #
-        # ReadDirectoryChangesW takes a previously-created
-        #  handle to a directory, a buffer size for results,
-        #  a flag to indicate whether to watch subtrees and
-        #  a filter of what changes to notify.
-        results = win32file.ReadDirectoryChangesW (
-        hDir,
-        2048,
-        True,
-        win32con.FILE_NOTIFY_CHANGE_FILE_NAME |
-        win32con.FILE_NOTIFY_CHANGE_DIR_NAME |
-        win32con.FILE_NOTIFY_CHANGE_ATTRIBUTES |
-        win32con.FILE_NOTIFY_CHANGE_SIZE |
-        win32con.FILE_NOTIFY_CHANGE_LAST_WRITE |
-        win32con.FILE_NOTIFY_CHANGE_SECURITY,
+        path_to_watch = g.watchpath
+        hDir = win32file.CreateFile (
+        path_to_watch,
+        FILE_LIST_DIRECTORY,
+        win32con.FILE_SHARE_READ | win32con.FILE_SHARE_WRITE,
         None,
+        win32con.OPEN_EXISTING,
+        win32con.FILE_FLAG_BACKUP_SEMANTICS,
         None
         )
-        results = [(ACTIONS[action],os.path.join(g.watchpath,str(path))) for action, path in results]
-        #                                                     ^ (paths are in unicode by default)
-        print "tick"
-        if not g.events:
-            thread.start_new_thread(timer,())
-        g.events.extend(results)
+        while True:
+            #
+            # ReadDirectoryChangesW takes a previously-created
+            #  handle to a directory, a buffer size for results,
+            #  a flag to indicate whether to watch subtrees and
+            #  a filter of what changes to notify.
+            results = win32file.ReadDirectoryChangesW (
+            hDir,
+            2048,
+            True,
+            win32con.FILE_NOTIFY_CHANGE_FILE_NAME |
+            win32con.FILE_NOTIFY_CHANGE_DIR_NAME |
+            win32con.FILE_NOTIFY_CHANGE_ATTRIBUTES |
+            win32con.FILE_NOTIFY_CHANGE_SIZE |
+            win32con.FILE_NOTIFY_CHANGE_LAST_WRITE |
+            win32con.FILE_NOTIFY_CHANGE_SECURITY,
+            None,
+            None
+            )
+            results = [(ACTIONS[action],os.path.join(g.watchpath,str(path))) for action, path in results]
+            #                                                     ^ (paths are in unicode by default)
+            g.timeline.append((time.clock(),results))
+            print "tick"
+            if not g.events:
+                thread.start_new_thread(timer,())
+            g.events.extend(results)
+    except:
+        traceback.print_exc()
+        thread.interrupt_main()
 
 def crash():
     socket.send("#")
@@ -254,7 +358,7 @@ def make_folder(sock,path):
 def handle_send_request(sock,filesize):
     print "Received space check request for", filesize, "bytes"
     filesize = int(filesize)
-    sock.send(chr(1)) #for now we'll just say yes
+    sock.send(chr(1),'w') #for now we'll just say yes
 
 def receive_file(sock,path,exactsize):
     #make sure the watcher doesn't spot this change and report it to the server
@@ -264,8 +368,44 @@ def receive_file(sock,path,exactsize):
         g.ignore.append(("U",path)) #a file's actually being modified, not created
     else:
         g.ignore.append(("C",path))
-    filebinary = common.download(sock,exactsize)
+    filebinary = download(sock,exactsize)
     filebinary = easyaes.decrypt(filebinary,path,g.password)
+
+def download(sock,exactsize):
+    """ Receives a file, checking a hash after every 256 bytes """
+    exactsize = int(exactsize)
+    bytesreceived = 0
+    resend = []
+    bytestream = ""
+    time.sleep(1)
+    while bytesreceived < exactsize:
+        block = sock.recv(min(exactsize-bytesreceived-64,256))
+        HASH = sock.recv(64)
+        #print "got block", len(block), len(HASH)
+        #check block
+        if sha(block) != HASH:
+            #add a resend request
+            print "hash doesn't match"
+            resend.append(bytesreceived - 64*bytesreceived / 320) #working out where the corrupted block started in the original data (without hashes)
+        bytestream += block #don't worry, we'll request a resend and overwrite it if it was corrupted
+        bytesreceived += 256+64
+    print len(resend), "out of", ceil(exactsize,256), "blocks corrupted"
+    message = ""
+    for i in resend: #i for index (in the original, unhashed bytestream back on clientside)
+        raise
+        message += str(i) + chr(0)
+    message += chr(255)
+    sock.send(message,'w')
+    print "sent acknowledgement:", message
+    for i in resend:
+        #now receive the resends, if any
+        print "getting resend", i
+        exactsize = receive_header(sock)[1][0]
+        block = download(sock,exactsize)
+        print "got resend"
+        #now insert the correct block back into the bytestream, overwriting the corrupted block
+        bytestream = bytestream[:i]+block+bytestream[i+256:]
+    return bytestream
 
 def delete_file(sock,path):
     print "Received request to delete file", path
@@ -310,11 +450,13 @@ handlers = {
 
 if __name__ == "__main__":
     #message header 1st bytes:
-    #1 - authentication request
+    #1 - Deprecated
     #2 - new account request (Deprecated. The number 2 will be reassigned later)
     #3 - send request (followed by approximate file size)
     #4 - incoming file (next four bytes store number of 16-byte blocks in file as an integer)
     #5 - delete file
+    #6 - move file
+    #7 - rename file
     g = _globals()
     g.loggedin = False
     g.events = []
@@ -323,16 +465,18 @@ if __name__ == "__main__":
     g.queue = []
     g.socklock = 0 #0 = no lock, 1 = locked to watcher, 2 = locked to listener
     g.watchersockbuffer = []
+    g.listenersockbuffer = []
     g.ignore = []
+    g.timeline = []
+    time.clock()
 
     socket = socket.socket()
     print "Connecting..."
     socket.connect(('localhost',7274))
     print "Connected"
-
-    common.socket = common.WatcherSock(socket) #all common functions used by watcher use the global variable socket; all used by listener will take the normal socket as an argument
-
+    
     authenticate()
     if raw_input("Watch folder 2? "): g.watchpath = r"C:\Users\Philip\Desktop\cryptobox2"
-    thread.start_new_thread(listener,())
-    watcher()
+    thread.start_new_thread(watcher,())
+    thread.start_new_thread(listener,(Halfsock(socket,2),) )
+    thread.start_new_thread(receiver,(socket,) )
