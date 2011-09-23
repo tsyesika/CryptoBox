@@ -1,11 +1,10 @@
 #CryptoBox client
-import socket, ssl, os, hashlib, easyaes, win32file, win32con, thread, traceback, time, common, client_config, shutil, struct
+import socket, ssl, os, hashlib, easyaes, win32file, win32con, thread, traceback, time, common, client_config, shutil, struct, rpdb2
 from common import makeheader, ceil
 
+
 class _globals():
-    def __setattr__(self,name,value):
-        self.__dict__[name] = value
-        common.g.__dict__[name] = value #functions both in cryptoclient's namespace and in common's need access to g, so it's important to synchronize them
+    pass
 
 class Halfsock():
     """A wrapper class for socket that receives from a buffer list instead of the directly from socket.
@@ -13,7 +12,7 @@ class Halfsock():
     def __init__(self,sock,_thread):
         self.sock = sock
         self._thread = _thread #1 = watcher, 2 = listener
-        
+    
     def recv(self,n):
         message = ""
         if self._thread == 1:
@@ -37,6 +36,10 @@ class Halfsock():
         self.sock.send(recipient+struct.pack("H",len(message)))
         self.sock.send(message)
         g.socklock = 0
+        if self._thread == 1:
+            g.wsend.extend(list(recipient+struct.pack("H",len(message))+message))
+        else:
+            g.lsend.extend(list(recipient+struct.pack("H",len(message))+message))
 
 def sha(x):
     return hashlib.sha512(x).digest()
@@ -84,24 +87,27 @@ def receive_header(sock):
     header = ""
     while True:
         header += sock.recv(1)
+        #print "header:", header
         if header == "#":
             thread.interrupt_main()
             raise
         if header[-1] == chr(255):
             #found end of header
             args = header.split(chr(0))[1:-1]
+            #print "returning", header
             return ord(header[0]), args
 
 def listener(sock):
     """ Listens for updates from the server """
     try:
+        rpdb2.settrace()
         while True:
             print
-            #print "Listener is listening..."
+            ##print "Listener is listening..."
             TYPE, args = receive_header(sock)
-            #print "got header", TYPE, args
+            ##print "got header", TYPE, args
             handlers[TYPE](sock,*args)
-            #print "dealt with it"
+            ##print "dealt with it"
     except:
         traceback.print_exc()
         thread.interrupt_main()
@@ -109,6 +115,7 @@ def listener(sock):
 def receiver(sock):
     """ Receives stuff from the client, forwards it to either the watcher or the listener """
     try:
+        rpdb2.settrace()
         while True:
             message = []
             byte = sock.recv(1)
@@ -123,8 +130,10 @@ def receiver(sock):
                 
             if byte in ('W','w'): #for watcher
                 g.watchersockbuffer.extend(message)
+                g.wrecv.extend(list(byte+struct.pack("H",n))+message)
             else: #for listener
                 g.listenersockbuffer.extend(message)
+                g.lrecv.extend(list(byte+struct.pack("H",n))+message)
     except:
         traceback.print_exc()
         thread.interrupt_main()
@@ -133,11 +142,12 @@ def receiver(sock):
 
 def request_send(sock,path=None,exactsize=None):
     if not exactsize:
-        print path
+        print "Requesting to send", path
         length = ceil(os.stat(path).st_size,16)*16 + 256 #now length is a generous estimate of ciphertext filesize
         message = makeheader(3,length)
         sock.send(message) #send request has no body
     else:
+        print "Requesting to send", exactsize, "bytes"
         sock.send(makeheader(3,exactsize))
     reply = sock.recv(1)
     if ord(reply) != 1:
@@ -178,10 +188,8 @@ def upload(socket,data):
     while True:
         resend += socket.recv(1)
         if resend[-1] == chr(255):
-            print resend
             resend = [int(i) for i in resend.split(chr(0))[:-1]]
             break
-    print "resend =", resend
     for i in resend:
         #resend corrupted blocks
         print "resending block", i
@@ -267,6 +275,7 @@ def handleDirEvents():
         print "Warning: unrecognised signature:"
         print events
         print summary
+        f, two = lambda x,y:False, False
     #now actually process the event
     while events:
         a = events.pop(0)
@@ -292,7 +301,8 @@ def handleDirEvents():
 
 def watcher():
     try:
-        print "watcher invoked"
+        rpdb2.settrace()
+        #print "watcher invoked"
         #Thanks to Tim Golden for most of this code: http://timgolden.me.uk/python/win32_how_do_i/watch_directory_for_changes.html
         ACTIONS = {
         1 : "C",  #CREATED
@@ -336,7 +346,7 @@ def watcher():
             results = [(ACTIONS[action],os.path.join(g.watchpath,str(path))) for action, path in results]
             #                                                     ^ (paths are in unicode by default)
             g.timeline.append((time.clock(),results))
-            print "tick"
+            #print "tick"
             if not g.events:
                 thread.start_new_thread(timer,())
             g.events.extend(results)
@@ -350,13 +360,13 @@ def crash():
 #------- HANDLE MOD REQUESTS ------------------
 
 def make_folder(sock,path):
-    print "Received request to make folder", path
+    #print "Received request to make folder", path
     path = getabs(path)
     g.ignore.append(("C",path))
     os.mkdir(path)
 
 def handle_send_request(sock,filesize):
-    print "Received space check request for", filesize, "bytes"
+    #print "Received space check request for", filesize, "bytes"
     filesize = int(filesize)
     sock.send(chr(1),'w') #for now we'll just say yes
 
@@ -381,34 +391,34 @@ def download(sock,exactsize):
     while bytesreceived < exactsize:
         block = sock.recv(min(exactsize-bytesreceived-64,256))
         HASH = sock.recv(64)
-        #print "got block", len(block), len(HASH)
+        ##print "got block", len(block), len(HASH)
         #check block
         if sha(block) != HASH:
             #add a resend request
-            print "hash doesn't match"
+            #print "hash doesn't match"
             resend.append(bytesreceived - 64*bytesreceived / 320) #working out where the corrupted block started in the original data (without hashes)
         bytestream += block #don't worry, we'll request a resend and overwrite it if it was corrupted
         bytesreceived += 256+64
-    print len(resend), "out of", ceil(exactsize,256), "blocks corrupted"
+    #print len(resend), "out of", ceil(exactsize,256), "blocks corrupted"
     message = ""
     for i in resend: #i for index (in the original, unhashed bytestream back on clientside)
         raise
         message += str(i) + chr(0)
     message += chr(255)
     sock.send(message,'w')
-    print "sent acknowledgement:", message
+    #print "sent acknowledgement:", message
     for i in resend:
         #now receive the resends, if any
-        print "getting resend", i
+        #print "getting resend", i
         exactsize = receive_header(sock)[1][0]
         block = download(sock,exactsize)
-        print "got resend"
+        #print "got resend"
         #now insert the correct block back into the bytestream, overwriting the corrupted block
         bytestream = bytestream[:i]+block+bytestream[i+256:]
     return bytestream
 
 def delete_file(sock,path):
-    print "Received request to delete file", path
+    #print "Received request to delete file", path
     path = os.path.join(g.watchpath,path)
     if os.path.isdir(path):
         g.ignore.extend(
@@ -422,7 +432,7 @@ def delete_file(sock,path):
 
 def move_file(sock,pathold,pathnew):
     #move the file
-    print "Received request to move file"
+    #print "Received request to move file"
     pathold = os.path.join(g.watchpath,pathold)
     pathnew = os.path.join(g.watchpath,pathnew)
     g.ignore.append( (("D",pathold),("C",pathnew)) )
@@ -430,7 +440,7 @@ def move_file(sock,pathold,pathnew):
 
 def rename_file(sock,pathold,pathnew):
     #rename the file
-    print "Received request to rename file"
+    #print "Received request to rename file"
     pathold = os.path.join(g.watchpath,pathold)
     pathnew = os.path.join(g.watchpath,pathnew)
     g.ignore.append( (("F",pathold),("T",pathnew)) )
@@ -468,11 +478,15 @@ if __name__ == "__main__":
     g.listenersockbuffer = []
     g.ignore = []
     g.timeline = []
+    g.wsend = []
+    g.wrecv = []
+    g.lsend = []
+    g.lrecv = []
     time.clock()
 
     socket = socket.socket()
     print "Connecting..."
-    socket.connect(('localhost',7274))
+    socket.connect(('localhost',7272))
     print "Connected"
     
     authenticate()

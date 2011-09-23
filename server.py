@@ -46,6 +46,12 @@ class Halfsock():
         self.sock.send(recipient+struct.pack("H",len(message)))
         self.sock.send(message)
         socklock[self.sock] = 0
+        if self.sock == debugsock:
+            if self._thread == 1:
+                wsend.extend(list(recipient+struct.pack("H",len(message))+message))
+            else:
+                lsend.extend(list(recipient+struct.pack("H",len(message))+message))
+
 
 def sha(x):
     return hashlib.sha512(x).digest()
@@ -105,7 +111,7 @@ def receive_header(sock):
     while True:
         header += sock.recv(1)
         if header == "#":
-            print "HERP FUCKING DERP"
+            #print "HERP FUCKING DERP"
             global die
             die = True
             sock.close()
@@ -142,7 +148,7 @@ def watcher(sock):
                     message = relaybuffer[sock].pop(0)
                     relay(sock,message[0],message[1])
     except:
-        print "DERP"
+        #print "DERP"
         traceback.print_exc()
         crash()
 
@@ -172,17 +178,20 @@ def relay(sock,command,args):
 
 def request_send(sock,path=None,exactsize=None):
     if not exactsize:
-        print path
+        #print "Requesting to send", path
         length = ceil(os.stat(path).st_size,16)*16 + 256 #now length is a generous estimate of ciphertext filesize
         message = makeheader(3,length)
         sock.send(message) #send request has no body
     else:
+        #print "Requesting to send", exactsize, "bytes"
         sock.send(makeheader(3,exactsize))
     reply = sock.recv(1)
     if ord(reply) != 1:
-        print "Upload request denied. Sorry."
+        #print "Upload request denied. Sorry."
         return False
-    return True
+    else:
+        #print "Request was accepted, proceeding to send"
+        return True
 
 def send_file(sock,path):
     fin = open(repopath(sock)+"\\"+path,"rb")
@@ -194,7 +203,7 @@ def send_file(sock,path):
     sock.send(message)
     # SEND BODY
     r = upload(sock,data)
-    print "File sent,", r, "blocks resent"
+    #print "File sent:", os.path.split(path)[1]+",", r, "blocks resent"
 
 def upload(socket,data):
     """ Sends a large string data to the server, using sha to ensure integrity """ 
@@ -213,13 +222,11 @@ def upload(socket,data):
     while True:
         resend += socket.recv(1)
         if resend[-1] == chr(255):
-            print resend
             resend = [int(i) for i in resend.split(chr(0))[:-1]]
             break
-    print "resend =", resend
     for i in resend:
         #resend corrupted blocks
-        print "resending block", i
+        #print "resending block", i
         socket.send(
             makeheader(4, min(256,len(data)-i))
             )
@@ -245,6 +252,7 @@ def handle_send_request(sock,filesize):
 
 def receive_file(sock,path,exactsize):
     filebinary = download(sock,exactsize)
+    print "File received:", os.path.split(path)[1]
     fout = open(repopath(sock)+"\\"+path,"wb")
     fout.write(filebinary)
     fout.close()
@@ -267,14 +275,12 @@ def download(sock,exactsize):
             resend.append(bytesreceived - 64*bytesreceived / 320) #working out where the corrupted block started in the original data (without hashes)
         bytestream += block #don't worry, we'll request a resend and overwrite it if it was corrupted
         bytesreceived += 256+64
-    print len(resend), "out of", ceil(exactsize,256), "blocks corrupted"
     message = ""
     for i in resend: #i for index (in the original, unhashed bytestream back on clientside)
         raise
         message += str(i) + chr(0)
     message += chr(255)
     sock.send(message,'w')
-    print "sent acknowledgement:", message
     for i in resend:
         #now receive the resends, if any
         print "getting resend", i
@@ -283,6 +289,7 @@ def download(sock,exactsize):
         print "got resend"
         #now insert the correct block back into the bytestream, overwriting the corrupted block
         bytestream = bytestream[:i]+block+bytestream[i+256:]
+    print exactsize, "bytes received"
     return bytestream
 
 def delete_file(sock,path):
@@ -328,7 +335,7 @@ def listener(sock):
             handlers[TYPE](sock,*args)
             if TYPE in (2,4,5,6,7):
                 socks = [pair[0] for pair in groups[sock_email(sock)] if pair[1] != sock] #get the other clients' watchers' sockets
-                print socks
+                print "Forwarding to watcher(s) using", socks
                 for othersock in socks:
                     relaybuffer[othersock].append([TYPE,args])
             print "dealt with it"
@@ -352,8 +359,10 @@ def receiver(sock):
             
         if byte in ('W','w'): #for watcher
             watchersockbuffer[sock].extend(list(message))
+            if sock==debugsock: wrecv.extend(list(byte+struct.pack("H",n)[0])+message)
         else: #for listener
             listenersockbuffer[sock].extend(list(message))
+            if sock==debugsock: lrecv.extend(list(byte+struct.pack("H",n)[0])+message)
 
 handlers = {
         0:None, #special type; tells the listener do nothing and wait until the watcher frees up the socket before calling recv again
@@ -373,6 +382,10 @@ watchersockbuffer = {}
 listenersockbuffer = {}
 die = False
 log = ""
+wsend = []
+wrecv = []
+lsend = []
+lrecv = []
 
 clients = 0
 if __name__ == "__main__":
@@ -385,7 +398,7 @@ if __name__ == "__main__":
         serversock = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
     else:
         serversock = socket.socket()
-    serversock.bind(('localhost',7274)) # change back to config info
+    serversock.bind(('localhost',7272)) # change back to config info
     serversock.listen(5)
     while clients < 2:
         clientsock, addr = serversock.accept()
@@ -393,3 +406,5 @@ if __name__ == "__main__":
         if server_config.sslwrap:
             sock = ssl.wrap_socket(serversock, server_side=True, ssl_version=ssl.PROTOCOL_TLSv1)
         thread.start_new_thread(authenticate,(clientsock,))
+
+    debugsock = clientsock
