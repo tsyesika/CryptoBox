@@ -203,6 +203,7 @@ def send_file(sock,path):
     sock.send(message)
     # SEND BODY
     r = upload(sock,data)
+    sock.send(sha(data)[:8])
     #print "File sent:", os.path.split(path)[1]+",", r, "blocks resent"
 
 def upload(socket,data):
@@ -359,10 +360,10 @@ def receiver(sock):
             
         if byte in ('W','w'): #for watcher
             watchersockbuffer[sock].extend(list(message))
-            if sock==debugsock: wrecv.extend(list(byte+struct.pack("H",n)[0])+message)
+            if sock==debugsock: wrecv.extend(list(byte+struct.pack("H",n))+message)
         else: #for listener
             listenersockbuffer[sock].extend(list(message))
-            if sock==debugsock: lrecv.extend(list(byte+struct.pack("H",n)[0])+message)
+            if sock==debugsock: lrecv.extend(list(byte+struct.pack("H",n))+message)
 
 handlers = {
         0:None, #special type; tells the listener do nothing and wait until the watcher frees up the socket before calling recv again
@@ -398,7 +399,7 @@ if __name__ == "__main__":
         serversock = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
     else:
         serversock = socket.socket()
-    serversock.bind(('localhost',7272)) # change back to config info
+    serversock.bind(('192.168.1.64',7273)) # change back to config info
     serversock.listen(5)
     while clients < 2:
         clientsock, addr = serversock.accept()

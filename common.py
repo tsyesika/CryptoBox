@@ -3,9 +3,6 @@
 import easyaes, time, hashlib, os, thread
 from math import ceil as __ceil__
 
-class _globals():
-        pass
-
 def sha(x):
         return hashlib.sha512(x).digest()
 
@@ -58,8 +55,3 @@ def upload(socket,data):
             )
         upload(data[ i : min(i+256,len(data)) ])
     return len(resend)
-
-
-
-g = _globals()
-g.watchersockbuffer = []

@@ -158,9 +158,9 @@ def request_send(sock,path=None,exactsize=None):
 def send_file(sock,path):
     cipher = []
     print "Encrypting..."
-    easyaes.encrypt(path,cipher,g.password) #easyaes needs your password to make an IV)
+    cipher = easyaes.encrypt(g.password,path=path) #easyaes needs your password to make an IV)
     print "Done"
-    cipher = "".join(cipher)
+    print list(sha(cipher)[:8])
     
     exactlength = len(cipher)+ceil(len(cipher),256)*64
     #       length of file     +   number of hashes   *  64 bytes per hash
@@ -229,8 +229,6 @@ def timer():
         while len(g.events) > oldlength:
             oldlength = len(g.events)
             time.sleep(0.2) #this (hopefully) prevents a bug whereby an event that occurs exactly a seconds after another one can be chopped in half, creating two events, one of which normally confuses handleDirEvents
-        if type(g.events) == tuple:
-            print g.events
         g.queue.append(g.events)
         g.events = []
         g.timeline.append((time.clock(),"Collected"))
@@ -345,8 +343,10 @@ def watcher():
             )
             results = [(ACTIONS[action],os.path.join(g.watchpath,str(path))) for action, path in results]
             #                                                     ^ (paths are in unicode by default)
+            results = [event for event in results if not event[1] in g.ignorefiles]
+            if not results:
+                continue #the events were all things we should ignore
             g.timeline.append((time.clock(),results))
-            #print "tick"
             if not g.events:
                 thread.start_new_thread(timer,())
             g.events.extend(results)
@@ -374,12 +374,13 @@ def receive_file(sock,path,exactsize):
     #make sure the watcher doesn't spot this change and report it to the server
     #this must be done by predicting exactly what event will be generated when the modification is made and warning handleDirEvents to ignore it
     path = os.path.join(g.watchpath,path)
-    if os.path.exists(path):
-        g.ignore.append(("U",path)) #a file's actually being modified, not created
-    else:
-        g.ignore.append(("C",path))
     filebinary = download(sock,exactsize)
-    filebinary = easyaes.decrypt(filebinary,path,g.password)
+    assert sock.recv(8) == sha(filebinary)[:8]
+    g.ignorefiles.append(path)
+    filebinary = easyaes.decrypt(g.password,ciphertext=filebinary)
+    fout = open(path,"wb").write(filebinary)
+    time.sleep(1)
+    g.ignorefiles.remove(path)
 
 def download(sock,exactsize):
     """ Receives a file, checking a hash after every 256 bytes """
@@ -477,6 +478,7 @@ if __name__ == "__main__":
     g.watchersockbuffer = []
     g.listenersockbuffer = []
     g.ignore = []
+    g.ignorefiles = [] #like ignore, but instead of storing a list of fabricated events, stores a list of files on which events should be ignored. Makes it easy to ignore the huge stream of U events caused by easyaes streaming decrypted data to a file.
     g.timeline = []
     g.wsend = []
     g.wrecv = []
@@ -486,7 +488,7 @@ if __name__ == "__main__":
 
     socket = socket.socket()
     print "Connecting..."
-    socket.connect(('localhost',7272))
+    socket.connect(('192.168.1.64',7273))
     print "Connected"
     
     authenticate()
